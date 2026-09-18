@@ -35,6 +35,11 @@ RUN git clone https://github.com/celerity/simsycl.git /tmp/simsycl \
 # -DCMAKE_PREFIX_PATH=/opt/simsycl on every configure.
 ENV CMAKE_PREFIX_PATH=/opt/simsycl
 
-# The workspace is bind-mounted from the host (owned by uid 1000) while the
-# container runs as root, which otherwise trips git's ownership check.
-RUN git config --global --add safe.directory /workspace
+# ubuntu:24.04 ships a default "ubuntu" user with UID 1000; take it over so the
+# container user matches the host user that owns the bind-mounted workspace.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sudo \
+  && rm -rf /var/lib/apt/lists/* \
+  && usermod --login fabianp --move-home --home /home/fabianp ubuntu \
+  && groupmod --new-name fabianp ubuntu \
+  && echo "fabianp ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/fabianp \
+  && chmod 0440 /etc/sudoers.d/fabianp
