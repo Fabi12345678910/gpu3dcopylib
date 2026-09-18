@@ -51,8 +51,6 @@ class executor {
 	[[nodiscard]] int64_t get_queues_per_device() const;
 
 	[[nodiscard]] std::string get_sycl_impl_name() const;
-	[[nodiscard]] bool is_2d_copy_available() const;
-	[[nodiscard]] bool is_3d_copy_available() const;
 	[[nodiscard]] bool is_device_to_device_copy_available() const;
 	[[nodiscard]] bool is_peer_memory_access_available() const;
 	[[nodiscard]] int32_t get_preferred_wg_size() const;
@@ -60,8 +58,6 @@ class executor {
 
 	enum class possibility {
 		possible,
-		needs_2d_copy,
-		needs_3d_copy,
 		needs_d2d_copy,
 	};
 

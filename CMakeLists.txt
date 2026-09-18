@@ -3,7 +3,8 @@ cmake_minimum_required(VERSION 3.24)
 project(gpu3dcopylib CXX)
 
 option(COPYLIB_USE_FMT "Use the fmt library rather than std::format" OFF)
-option(COPYLIB_USE_CUDA "Enable CUDA-backend-specific interop features" OFF)
+# only built by default for top-level builds, so that vendoring this library does not pull in Catch2
+option(COPYLIB_BUILD_TESTS "Build the test suite" ${PROJECT_IS_TOP_LEVEL})
 
 # when vendored, the enclosing project has usually already found a SYCL implementation
 if(NOT COMMAND add_sycl_to_target)
@@ -60,8 +61,7 @@ if(COPYLIB_USE_FMT)
   target_compile_definitions(copylib PUBLIC COPYLIB_USE_FMT)
 endif()
 
-if(COPYLIB_USE_CUDA)
-  find_package(CUDAToolkit REQUIRED)
-  target_link_libraries(copylib PUBLIC CUDA::cudart)
-  target_compile_definitions(copylib PUBLIC COPYLIB_CUDA)
+if(COPYLIB_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
 endif()

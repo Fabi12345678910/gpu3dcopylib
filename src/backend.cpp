@@ -6,40 +6,29 @@
 #include <simsycl/system.hh>
 #endif
 
-#if defined(__ACPP_ENABLE_CUDA_TARGET__) && defined(COPYLIB_CUDA)
-#define ACPP_WITH_CUDA true
-#else
-#define ACPP_WITH_CUDA false
-#endif
-
-#if ACPP_WITH_CUDA
-#include <cuda_runtime.h>
-#endif
-
 #include <string>
 #include <thread>
 
+// Skeleton: every function below returns a default-constructed value so that calling it is well-defined while the
+// implementation is missing. Functions returning a reference cannot do that and fail loudly instead.
+
 namespace copylib {
 
-std::string executor::get_sycl_impl_name() const {}
+std::string executor::get_sycl_impl_name() const { return {}; }
 
-bool executor::is_2d_copy_available() const {}
+bool executor::is_device_to_device_copy_available() const { return {}; }
 
-bool executor::is_3d_copy_available() const {}
+bool executor::is_peer_memory_access_available() const { return {}; }
 
-bool executor::is_device_to_device_copy_available() const {}
+int32_t executor::get_preferred_wg_size() const { return {}; }
 
-bool executor::is_peer_memory_access_available() const {}
+int get_cpu_for_gpu_alloc(int gpu_idx, size_t total_gpu_count) { return {}; }
 
-int32_t executor::get_preferred_wg_size() const {}
+std::string executor::get_info() const { return {}; }
 
-int get_cpu_for_gpu_alloc(int gpu_idx, size_t total_gpu_count) {}
+executor::possibility executor::can_copy(const copy_spec& spec) const { return {}; }
 
-std::string executor::get_info() const {}
-
-executor::possibility executor::can_copy(const copy_spec& spec) const {}
-
-executor::possibility executor::can_copy(const parallel_copy_set& set) const {}
+executor::possibility executor::can_copy(const parallel_copy_set& set) const { return {}; }
 
 void executor::barrier() {}
 
@@ -51,26 +40,34 @@ device::device(sycl::device dev, const std::vector<sycl::queue>& queues) : dev(d
 
 device::~device() {}
 
-sycl::queue& executor::get_queue(device_id id, int64_t queue_idx) {}
+sycl::queue& executor::get_queue(device_id id, int64_t queue_idx) {
+	COPYLIB_ERROR("executor::get_queue is not implemented");
+	__builtin_unreachable();
+}
 
-sycl::queue& executor::get_queue(const target& tgt) {}
+sycl::queue& executor::get_queue(const target& tgt) {
+	COPYLIB_ERROR("executor::get_queue is not implemented");
+	__builtin_unreachable();
+}
 
-std::byte* executor::get_buffer(device_id id) {}
+std::byte* executor::get_buffer(device_id id) { return {}; }
 
-std::byte* executor::get_staging_buffer(device_id id) {}
+std::byte* executor::get_staging_buffer(device_id id) { return {}; }
 
-std::byte* executor::get_host_buffer(device_id id) {}
+std::byte* executor::get_host_buffer(device_id id) { return {}; }
 
-std::byte* executor::get_host_staging_buffer(device_id id) {}
+std::byte* executor::get_host_staging_buffer(device_id id) { return {}; }
 
-int64_t executor::get_buffer_size() const {}
+int64_t executor::get_buffer_size() const { return {}; }
 
-int64_t executor::get_queues_per_device() const {}
+int64_t executor::get_queues_per_device() const { return {}; }
 
 template <typename CopyFun>
 void copy_via_repeated_1D_copies(CopyFun fun, const data_layout& source_layout, const data_layout& target_layout) {}
 
-executor::target execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx, bool alternate_device, const executor::target last_target) {}
+executor::target execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx, bool alternate_device, const executor::target last_target) {
+	return {};
+}
 
 namespace detail {
 

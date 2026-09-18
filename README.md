@@ -10,15 +10,18 @@ This library was specifically designed for the use within celerity, and therefor
 
 ## Status
 
-The API is complete, the implementation is not: every function is currently a skeleton with an empty body.
-`src/utils.cpp` is the only exception, it is carried over from the 2D library as-is.
+The API is complete, the implementation is not: every function is currently a skeleton returning a default-constructed
+value. `src/utils.cpp` is the only exception, it is carried over from the 2D library as-is.
+
+The test suite is being written ahead of the implementation. Test cases covering functions that are not implemented yet
+are tagged `[!mayfail]`, so they report their failures without failing the build, and the number of failures shrinks as
+the implementation lands. See [docs/testing.md](docs/testing.md) for the plan.
 
 ## Prerequisites
 
 - A SYCL implementation
     - The library is intended to work with SimSYCL (in CI), DPC++, and AdaptiveCpp
 - CMake 3.24 or later
-- [optional] CUDA Toolkit for CUDA-backend-specific interop features
 
 ## Building
 
@@ -45,9 +48,9 @@ The CMake script will report which SYCL implementation it has found and is using
 ### Configuration Options
 
 - `COPYLIB_USE_FMT`: Use the fmt library instead of relying on the C++20 `std::format`. Default: `OFF`
-- `COPYLIB_USE_CUDA`: Enable CUDA-backend-specific interop features. Default: `OFF`
+- `COPYLIB_BUILD_TESTS`: Build the test suite. Default: `ON` for top-level builds, `OFF` when vendored
 
-Both dependencies have to be findable by CMake if they are enabled; nothing is fetched automatically.
+`fmt` has to be findable by CMake if it is enabled; nothing is fetched automatically. Catch2 is fetched at configure time when the tests are built.
 
 ## Data Layout
 
@@ -59,8 +62,14 @@ All copies are described by a `data_layout`, a box of data inside a larger 3D al
 | `d0_stride` | size of one full row of the allocation |
 | `d1_stride` | size of one full plane of the allocation |
 | `dN_start_offset`, `dN_end_offset` | start and end of the box along dimension N |
+| `start`, `end` | half-open window of byte offsets into the packed box, i.e. with the gaps excluded |
 
 The outermost extent of the allocation is never needed. For an `int` allocation of shape `[12, 16, 20]`, `d0_stride` is `20 * 4` and `d1_stride` is `16 * 20 * 4`.
+
+The window selects which part of the box a copy actually transfers. The constructors set it to cover the whole box;
+chunking keeps the box and narrows only the window, so a chunk is described by the same nine box values as the copy it
+came from. A copy spec is valid when both of its windows have the same length, which is what allows a reshaping copy
+such as `int[1,1,6]` to `int[1,2,3]`.
 
 ## Usage
 
@@ -84,8 +93,8 @@ utils::print(exec.get_info()); // [optional] print information about the executu
 // === 2. Specifying a copy operation
 
 // provide these pointers as appropriate to source and target memory
-intptr_t src_ptr = 0x1; // pointer to the source
-intptr_t dst_ptr = 0x2; // pointer to the destination
+intptr_t src_ptr = 0x1000; // pointer to the source (must be at least 2-byte aligned)
+intptr_t dst_ptr = 0x2000; // pointer to the destination
 
 // an int allocation of shape [12, 16, 20], of which the box [2, 5) x [3, 7) x [4, 10) is copied; all values are in bytes
 const int64_t elem = sizeof(int);

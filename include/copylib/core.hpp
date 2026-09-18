@@ -48,9 +48,9 @@ struct data_layout {
 		staging_id staging;
 	};
 
-	int64_t d0_stride = 0;
-	int64_t d1_stride = 0;
-	
+	int64_t d0_stride = 0; // size of one full row of the allocation
+	int64_t d1_stride = 0; // size of one full plane of the allocation
+
 	int64_t d0_start_offset = 0;
 	int64_t d1_start_offset = 0;
 	int64_t d2_start_offset = 0;
@@ -59,42 +59,66 @@ struct data_layout {
 	int64_t d1_end_offset = 0;
 	int64_t d2_end_offset = 0;
 
-	data_layout();
-	data_layout(intptr_t base, int64_t offset, int64_t fragment_length);
+	// half-open window of byte offsets into the packed box, i.e. with the gaps excluded, with 0 <= start < end <= total_bytes().
+	// The constructors set it to cover the whole box; chunking keeps the box and narrows only the window.
+	int64_t start = 0;
+	int64_t end = 0;
+
+	data_layout() = default;
+
+	// a contiguous 1D layout of `length` bytes, starting `offset` bytes into the allocation
+	data_layout(intptr_t base, int64_t offset, int64_t length);
 	data_layout(intptr_t base, int64_t d0_stride, int64_t d1_stride, int64_t d0_start_offset, int64_t d1_start_offset, int64_t d2_start_offset,
 	    int64_t d0_end_offset, int64_t d1_end_offset, int64_t d2_end_offset);
+	// the same box and window as `layout`, but in the allocation at `base`
 	data_layout(intptr_t base, const data_layout& layout);
 
-	data_layout(staging_id staging, int64_t offset, int64_t fragment_length);
+	data_layout(staging_id staging, int64_t offset, int64_t length);
 	data_layout(staging_id staging, int64_t d0_stride, int64_t d1_stride, int64_t d0_start_offset, int64_t d1_start_offset, int64_t d2_start_offset,
 	    int64_t d0_end_offset, int64_t d1_end_offset, int64_t d2_end_offset);
 	data_layout(staging_id staging, const data_layout& layout);
 
-	// these should be moved into the header and marked constexpr (as in the 2D library) once implemented
-	[[nodiscard]] int64_t total_bytes() const;   // bytes covered, excluding the gaps
-	[[nodiscard]] int64_t total_extent() const;  // bytes spanned, including the gaps
-	[[nodiscard]] int64_t fragment_length() const;
-	[[nodiscard]] int64_t fragment_count() const;
-	[[nodiscard]] int64_t layer_count() const;
-	[[nodiscard]] bool contiguous_fragments() const;
-	[[nodiscard]] bool contiguous_layers() const;
-	[[nodiscard]] bool unit_stride() const;
-	[[nodiscard]] int32_t dimensions() const;
-	[[nodiscard]] int64_t fragment_offset(int64_t layer, int64_t fragment) const;
-	[[nodiscard]] int64_t layer_offset(int64_t layer) const;
-	[[nodiscard]] int64_t end_offset() const;
-	[[nodiscard]] bool is_unplaced_staging() const;
-	[[nodiscard]] std::byte* base_ptr() const;
+	// the same layout with the window narrowed to [start, end)
+	[[nodiscard]] data_layout with_window(int64_t start, int64_t end) const;
 
+	// the number of bytes this layout actually copies, i.e. the length of its window
+	[[nodiscard]] constexpr int64_t window_length() const { return end - start; }
+
+	// bytes covered by the box, excluding the gaps
+	[[nodiscard]] constexpr int64_t total_bytes() const { /* TODO: implement */ return 0; }
+	// offset just past the last byte of the box, relative to the allocation base, for bounds checks against a buffer size
+	[[nodiscard]] constexpr int64_t end_offset() const { /* TODO: implement */ return 0; }
+
+	// byte offset in the allocation of the byte `packed_offset` bytes into the box, with the gaps excluded.
+	// This is the closed form the copy kernels need: byte i of a copy sits at offset_at(start + i).
+	[[nodiscard]] constexpr int64_t offset_at(int64_t packed_offset) const { /* TODO: implement */ return 0; }
+
+	// shape predicates, all defined over the window rather than over the whole box
+	[[nodiscard]] constexpr bool is_contiguous() const { /* TODO: implement */ return false; }        // the window is a single contiguous run
+	[[nodiscard]] constexpr bool contiguous_fragments() const { /* TODO: implement */ return false; } // rows are adjacent, so they can be collapsed
+	[[nodiscard]] constexpr bool contiguous_layers() const { /* TODO: implement */ return false; }    // planes are adjacent, so they can be collapsed
+
+	[[nodiscard]] constexpr bool is_unplaced_staging() const { /* TODO: implement */ return false; }
+	[[nodiscard]] constexpr std::byte* base_ptr() const { /* TODO: implement */ return nullptr; }
+
+	// Compares the encoding field by field, window included. Two layouts describing the same bytes with different strides
+	// compare unequal; normalize both first to compare the bytes they describe.
 	bool operator==(const data_layout& other) const;
 	bool operator!=(const data_layout& other) const;
 };
 
+// Invokes f(offset_in_allocation, run_length) for each contiguous run of bytes covered by the layout's window.
+// This is the iteration primitive for the copy paths, the host memcpy fallback, the coverage check in is_equivalent and
+// the reference implementation in the tests. Per-fragment indexing cannot serve that purpose, because a window may
+// start or end in the middle of a row, making its first and last runs partial.
+template <typename F>
+void for_each_contiguous_run(const data_layout& layout, F&& f) {
+	(void)layout, (void)f; // TODO: implement
+}
+
 enum class copy_properties {
 	none = 0x0000,
 	use_kernel = 0x0001,  // whether to use a kernel to perform the copy
-	use_2D_copy = 0x0010, // whether to use a native 2D copy operation, if available
-	use_3D_copy = 0x0100, // whether to use a native 3D copy operation, if available
 };
 copy_properties operator|(copy_properties a, copy_properties b);
 bool operator&(copy_properties a, copy_properties b);
@@ -175,10 +199,13 @@ bool is_equivalent(const copy_plan& plan, const copy_spec& spec);
 // check whether the given copy set implements the given copy specification
 bool is_equivalent(const parallel_copy_set& set, const copy_spec& spec);
 
-// collapse dimensions which are densely packed, i.e. turn a contiguous 3D layout into a 2D or 1D one
+// Collapse densely packed dimensions into the unique normal form of the box (see "Normal form" in docs/design.md):
+// a single contiguous run becomes a 1D layout, evenly spaced runs a 2D one, and anything else stays 3D.
+// Two layouts describe the same box bytes and window exactly when their normal forms compare equal.
 data_layout normalize(const data_layout& layout);
 
-// collapse dimensions in both layouts of a copy spec, as far as both of them allow
+// Normalize each layout of a copy spec independently. Each side is read in its own packed order, so this preserves
+// exactly what the spec copies.
 copy_spec normalize(const copy_spec& spec);
 
 // apply given properties to the given copy spec

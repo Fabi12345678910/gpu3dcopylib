@@ -55,6 +55,37 @@ Each layout carries a half-open window `[start, end)` of byte offsets into the *
   - reshape copies use the same numbers on both sides;
   - a byte offset has exactly one encoding, while a 3D end position is ambiguous at row and plane boundaries.
 
+### Normal form and equality
+
+`operator==` and hashing compare the encoding field by field, window included. The canonical-encoding rule only makes
+the encoding unique for fixed strides, so the same bytes can still be encoded differently, e.g. a single row inside a
+large allocation versus the same bytes built with the 1D constructor. Comparing bytes therefore means normalizing first,
+which requires `normalize` to produce a **unique** encoding for each box, not just a collapsed one.
+
+The normal form is defined by the box's maximal contiguous runs, which depend only on the bytes, not on the allocation.
+With `o` the offset of the first run, `L` the run length, and all runs of a box having the same length:
+
+| Runs | Form | Encoding |
+| --- | --- | --- |
+| one | 1D | `d0_stride = d1_stride = o + L`, `d0: [o, o + L)`, `d1: [0, d0_stride)`, `d2: [0, d1_stride)` |
+| `n` evenly spaced by `s` | 2D | `d0_stride = s`, `d0: [o % s, o % s + L)`, `d1: [o - o % s, o - o % s + n * s)`, `d1_stride` = end of `d1`, `d2: [0, d1_stride)` |
+| a two-level grid | 3D | the ordinary encoding, which is already unique |
+
+- The window is unchanged: collapsing keeps the packed order, which is ascending address order.
+- The 1D constructor produces exactly the 1D normal form.
+- Evenly spaced runs include the case where full-height partial rows continue across a plane boundary with the same
+  spacing, so such a layout collapses to 2D even though no two of its rows are adjacent.
+- A single-plane layout loses its plane stride, which the bytes do not determine.
+- `normalize(spec)` normalizes each side independently. Each side is read in its own packed order, so this preserves the
+  copy exactly; the 2D library's "as far as both sides allow" rule existed because fragment structure had to match.
+
+### Chunking edge cases
+
+- A `chunk_size` below the local alignment is raised to the alignment.
+- Chunk boundaries sit at multiples of the alignment in absolute packed offsets, not relative to the window start, so
+  that every interior boundary stays aligned for the kernels. Only the window's own ends can be unaligned: the window
+  `[3, 288)` with alignment 8 and `chunk_size` 64 becomes `[3, 64)`, `[64, 128)`, …, `[256, 288)`.
+
 ### Native 2D/3D copies are dropped
 
 The following go away: `use_2D_copy`, `use_3D_copy`, `is_2d_copy_available()`, `is_3d_copy_available()`, `possibility::needs_2d_copy`/`needs_3d_copy`, the 2D staging layout, and the CUDA dependency (`COPYLIB_USE_CUDA`). Staging buffers are always 1D. `copy_properties` keeps only `use_kernel` and stays an enum for future flags.
@@ -75,10 +106,10 @@ Why stage at all: the gather/scatter kernels are cheap because they run in paral
 
 - Chunk boundaries have to be rounded to a local alignment: the largest power of two up to 64 that divides both row extents and all strides. It keeps kernels on wide element types and is computed per copy, not stored. `chunk_size` must be at least this alignment.
 - The kernel's `int32` index path has to check the full index span of the window on both sides, not individual fields.
-- Contiguity (`is_contiguous`, `unit_stride`) should be defined over the window. A window inside one row is a single `queue.copy`.
-- The general 3D kernel needs two divmods per side per element. Mitigations: special-case 1D/2D boxes, or split same-extent copies into box-shaped pieces run as `nd_range<2>`/`<3>` kernels without division.
+- Contiguity (`is_contiguous` on both `data_layout` and `copy_spec`) is defined over the window. A window inside one row is a single `queue.copy`.
+- The general 3D kernel needs two divmods per side per element, which is what `data_layout::offset_at()` computes. Mitigations: special-case 1D/2D boxes, or split same-extent copies into box-shaped pieces run as `nd_range<2>`/`<3>` kernels without division. Which of those applies is a property of the copy, not of one layout, so it is reduced from both sides at once (as Celerity does in `layout_nd_copy`) rather than reported per layout.
 - Overlap checks for copies within one allocation can only be conservative.
-- Direct d2d copies with host staging must pack the staging layout or size it by `total_extent()`.
+- Direct d2d copies with host staging pack the staging layout. Staging buffers are always 1D, so their size is the window length.
 - Strided copies involving the host become `memcpy` loops without native 2D copies. Benchmark against the 2D library before accepting this.
 
 ## Open decisions
@@ -99,15 +130,19 @@ These can be settled during implementation:
 ## Upcoming steps
 
 1. Settle open decisions 1-3.
-2. Update the skeleton:
-   - add the byte window to `data_layout` and its constructors;
-   - remove the native 2D/3D copy API and `COPYLIB_USE_CUDA`;
-   - rework the accessors (`fragment_offset`, `layer_offset`, `contiguous_*`, `dimensions`; maybe `dN` naming);
-   - update the README table and example.
-3. Write tests first:
-   - unit tests for the layout math, using the `int[12,16,20]` examples;
-   - a property test: random shapes, boxes, windows and chunk sizes, manifested, executed on SimSYCL, compared with a reference copy;
-   - add a `COPYLIB_BUILD_TESTS` option that is only on for top-level builds.
-4. Implement the core: layout accessors (move them into the header as `constexpr`), `is_valid`, `normalize`, `apply_chunking`, `apply_staging`, `apply_d2d_implementation`, `manifest_strategy`, and `is_equivalent` as a tiling check.
+2. ~~Update the skeleton.~~ Done: the window is in `data_layout` and its constructors, the 1D constructors take a
+   length instead of a `fragment_length`, the native 2D/3D copy API and `COPYLIB_USE_CUDA` are gone, and the README
+   table and example are updated. The accessors were reworked by dropping rather than defining them:
+   - `dimensions()` is gone. How many strides a copy needs is a property of the pair of layouts, not of one of them,
+     so it is reduced from both sides at once when the copy is executed.
+   - `total_extent()` is gone, subsumed by `end_offset()`. Its only use was sizing staging buffers, which are now
+     always 1D and packed, so their size is the window length.
+   - `layer_count()`, `layer_offset()` and `fragment_offset()` are gone. A window may start or end mid-row, so
+     per-fragment indexing cannot describe what a copy transfers. They are replaced by `offset_at()`, the closed form
+     for a single byte, and by `for_each_contiguous_run()`, the iteration primitive over a window.
+   - `unit_stride()` is renamed to `is_contiguous()`, which is what it means once it is defined over the window.
+3. Write tests first, ahead of the implementation. In progress, see [testing.md](testing.md) for the layered plan and
+   for how progress is reported in CI.
+4. Implement the core: the layout accessors, `is_valid`, `normalize`, `apply_chunking`, `apply_staging`, `apply_d2d_implementation`, `manifest_strategy`, and `is_equivalent` as a tiling check.
 5. Implement the backend: staging fulfiller with correct alignment, the `execute_copy` paths (host `memcpy`, contiguous copy, merged 1D runs), and the kernels (`int32` span check, special cases).
 6. Add strategy selection and port the benchmarks. Compare against the 2D library, especially strided copies involving the host.
