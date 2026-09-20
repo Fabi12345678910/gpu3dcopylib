@@ -49,7 +49,7 @@ TEST_CASE("the normal form builders describe the bytes of the shapes they stand 
 	using namespace copylib_testing::normal_form;
 	constexpr intptr_t at = ref::base;
 
-	CHECK(first_difference(reference_offsets(one_run(at, 0, 12 * ref::d1_stride)), reference_offsets(shapes::whole_allocation())) == -1);
+	CHECK(first_difference(reference_offsets(one_run(at, 0, 12 * ref::plane_bytes)), reference_offsets(shapes::whole_allocation())) == -1);
 	CHECK(first_difference(reference_offsets(one_run(at, 16, 24)), reference_offsets(shapes::single_row())) == -1);
 	CHECK(first_difference(reference_offsets(one_run(at, 240, 320)), reference_offsets(shapes::full_rows_of_one_plane())) == -1);
 	CHECK(first_difference(reference_offsets(uniform_runs(at, 2800, 320, 3, 1280)), reference_offsets(shapes::full_rows_of_three_planes())) == -1);

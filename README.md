@@ -54,17 +54,19 @@ The CMake script will report which SYCL implementation it has found and is using
 
 ## Data Layout
 
-All copies are described by a `data_layout`, a box of data inside a larger 3D allocation. All values are in bytes, `d0` is the innermost dimension and always contiguous, `d2` the outermost:
+All copies are described by a `data_layout`, a box of data inside a larger 3D allocation. `d0` is the innermost dimension and always contiguous, `d2` the outermost; `d0` counts bytes, `d1` rows and `d2` planes:
 
-| Field | Meaning |
-| --- | --- |
-| `base` | base address of the allocation (or a `staging_id` for a staging buffer which has not been placed yet) |
-| `d0_stride` | size of one full row of the allocation |
-| `d1_stride` | size of one full plane of the allocation |
-| `dN_start_offset`, `dN_end_offset` | start and end of the box along dimension N |
-| `start`, `end` | half-open window of byte offsets into the packed box, i.e. with the gaps excluded |
+| Field | Meaning | Unit |
+| --- | --- | --- |
+| `base` | base address of the allocation (or a `staging_id` for a staging buffer which has not been placed yet) | |
+| `d0_stride` | one full row of the allocation | bytes |
+| `d1_stride` | one full plane of the allocation | rows |
+| `d0_start_offset`, `d0_end_offset` | start and end of the box within a row | bytes |
+| `d1_start_offset`, `d1_end_offset` | start and end of the box within a plane | rows |
+| `d2_start_offset`, `d2_end_offset` | start and end of the box within the allocation | planes |
+| `start`, `end` | half-open window of byte offsets into the packed box, i.e. with the gaps excluded | bytes |
 
-The outermost extent of the allocation is never needed. For an `int` allocation of shape `[12, 16, 20]`, `d0_stride` is `20 * 4` and `d1_stride` is `16 * 20 * 4`.
+The outermost extent of the allocation is never needed. For an `int` allocation of shape `[12, 16, 20]`, `d0_stride` is `20 * 4` and `d1_stride` is `16`.
 
 The window selects which part of the box a copy actually transfers. The constructors set it to cover the whole box;
 chunking keeps the box and narrows only the window, so a chunk is described by the same nine box values as the copy it
@@ -96,13 +98,13 @@ utils::print(exec.get_info()); // [optional] print information about the executu
 intptr_t src_ptr = 0x1000; // pointer to the source (must be at least 2-byte aligned)
 intptr_t dst_ptr = 0x2000; // pointer to the destination
 
-// an int allocation of shape [12, 16, 20], of which the box [2, 5) x [3, 7) x [4, 10) is copied; all values are in bytes
+// an int allocation of shape [12, 16, 20], of which the box [2, 5) x [3, 7) x [4, 10) is copied
 const int64_t elem = sizeof(int);
-const int64_t d0_stride = 20 * elem; // size of one full row
-const int64_t d1_stride = 16 * d0_stride; // size of one full plane
+const int64_t d0_stride = 20 * elem; // bytes per row
+const int64_t d1_stride = 16; // rows per plane
 
-// source data layout
-const data_layout source_layout{src_ptr, d0_stride, d1_stride, 4 * elem, 3 * d0_stride, 2 * d1_stride, 10 * elem, 7 * d0_stride, 5 * d1_stride};
+// source data layout: d0 in bytes, d1 in rows, d2 in planes
+const data_layout source_layout{src_ptr, d0_stride, d1_stride, 4 * elem, 3, 2, 10 * elem, 7, 5};
 const data_layout target_layout{dst_ptr, source_layout}; // target data layout, same structure as the source
 
 // copy from device 0 to device 1

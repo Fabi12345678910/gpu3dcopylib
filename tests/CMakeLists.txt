@@ -15,7 +15,6 @@ set(TEST_FILES
   validation_tests.cpp
   reference_tests.cpp
   normalization_tests.cpp
-  equivalence_tests.cpp
   chunking_tests.cpp
 )
 

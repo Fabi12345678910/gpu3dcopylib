@@ -70,7 +70,7 @@ TEST_CASE("a 1D constructor describes a contiguous run", "[layout][!mayfail]") {
 
 	CHECK(layout.total_bytes() == length);
 	CHECK(layout.window_length() == length);
-	CHECK(layout.is_contiguous());
+	CHECK(layout.is_window_contiguous());
 	CHECK(layout.offset_at(0) == offset);
 	// design.md: the 1D constructor produces exactly the 1D normal form
 	CHECK(copylib_testing::same_fields(layout, copylib_testing::normal_form::one_run(ref::base, offset, length)));
@@ -120,13 +120,13 @@ TEST_CASE("the reference box covers the documented number of bytes", "[layout][!
 }
 
 TEST_CASE("the end offset is the first byte past the box", "[layout][!mayfail]") {
-	// relative to the allocation base, so that it can be bounds-checked against a buffer size.
-	// last plane starts at 6400 - 1280, its last row at 560 - 80, and that row ends at 40.
-	constexpr int64_t expected = (ref::d2_end_offset - ref::d1_stride) + (ref::d1_end_offset - ref::d0_stride) + ref::d0_end_offset;
+	// relative to the allocation base, so that it can be bounds-checked against a buffer size:
+	// the last plane is plane 4, its last row is row 6, and that row ends 40 bytes in.
+	constexpr int64_t expected = (ref::d2_end_offset - 1) * ref::plane_bytes + (ref::d1_end_offset - 1) * ref::d0_stride + ref::d0_end_offset;
 	CHECK(expected == 5640); // guards the test's own arithmetic
 
 	CHECK(ref::fields().end_offset() == 5640);
-	CHECK(whole_allocation().end_offset() == 12 * ref::d1_stride);
+	CHECK(whole_allocation().end_offset() == 12 * ref::plane_bytes);
 }
 
 TEST_CASE("offset_at maps packed offsets into the allocation", "[layout][!mayfail]") {
@@ -144,28 +144,28 @@ TEST_CASE("a strided box is not contiguous", "[layout][!mayfail]") {
 	// the box covers 24 of the 80 bytes of each row, and 4 of the 16 rows of each plane
 	const auto layout = ref::fields();
 
-	CHECK_FALSE(layout.is_contiguous());
+	CHECK_FALSE(layout.is_window_contiguous());
 	CHECK_FALSE(layout.d1_contigious());
 	CHECK_FALSE(layout.d2_contigious());
 
 	// paired with a positive, so that the case cannot pass while the predicates are placeholders returning false
-	CHECK(whole_allocation().is_contiguous());
+	CHECK(whole_allocation().is_window_contiguous());
 }
 
 TEST_CASE("a box spanning the whole allocation is contiguous", "[layout][!mayfail]") {
 	const auto layout = whole_allocation();
 
-	CHECK(layout.total_bytes() == 12 * ref::d1_stride);
+	CHECK(layout.total_bytes() == 12 * ref::plane_bytes);
 	CHECK(layout.d1_contigious());
 	CHECK(layout.d2_contigious());
-	CHECK(layout.is_contiguous());
+	CHECK(layout.is_window_contiguous());
 }
 
 TEST_CASE("a box covering a single row is contiguous", "[layout][!mayfail]") {
 	const auto layout = single_row();
 
 	CHECK(layout.total_bytes() == ref::row_extent);
-	CHECK(layout.is_contiguous());
+	CHECK(layout.is_window_contiguous());
 }
 
 TEST_CASE("full rows of one plane have collapsible fragments", "[layout][!mayfail]") {
@@ -173,17 +173,17 @@ TEST_CASE("full rows of one plane have collapsible fragments", "[layout][!mayfai
 
 	CHECK(layout.total_bytes() == ref::rows * ref::d0_stride);
 	CHECK(layout.d1_contigious());
-	CHECK(layout.is_contiguous());
+	CHECK(layout.is_window_contiguous());
 }
 
 TEST_CASE("contiguity is a property of the window, not of the box", "[layout][window][!mayfail]") {
 	// design.md: "A window inside one row is a single queue.copy."
 	auto layout = ref::fields();
-	REQUIRE_FALSE(layout.is_contiguous());
+	REQUIRE_FALSE(layout.is_window_contiguous());
 
 	layout.start = 2;
 	layout.end = 10;
-	CHECK(layout.is_contiguous());
+	CHECK(layout.is_window_contiguous());
 }
 
 TEST_CASE("iterating a full window yields one run per row", "[layout][window][!mayfail]") {
@@ -198,7 +198,7 @@ TEST_CASE("iterating a full window yields one run per row", "[layout][window][!m
 
 	CHECK(runs.at(0).offset == ref::first_byte);                   // 2816
 	CHECK(runs.at(1).offset == ref::first_byte + ref::d0_stride);  // 2896, next row
-	CHECK(runs.at(4).offset == ref::first_byte + ref::d1_stride);  // 4096, next plane
+	CHECK(runs.at(4).offset == ref::first_byte + ref::plane_bytes); // 4096, next plane
 	CHECK(runs.at(11).offset + runs.at(11).length == 5640);        // ends where the box ends
 }
 

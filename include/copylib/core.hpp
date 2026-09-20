@@ -41,19 +41,20 @@ static_assert(sizeof(staging_id) == sizeof(intptr_t));
 static_assert(offsetof(staging_id, is_staging_id) == 0);
 
 // 3D data layout used as the source or destination of a copy operation
-// all values are in bytes; d0 is the innermost dimension and always contiguous, d2 the outermost
+// d0 is the innermost dimension and always contiguous, d2 the outermost.
+// d0 counts bytes, d1 rows and d2 planes, so a plane spans d1_stride * d0_stride bytes.
 struct data_layout {
 	union {
 		intptr_t base = 0;
 		staging_id staging;
 	};
 
-	int64_t d0_stride = 0; // size of one full row of the allocation
-	int64_t d1_stride = 0; // size of one full plane of the allocation
+	int64_t d0_stride = 0; // bytes per row of the allocation
+	int64_t d1_stride = 0; // rows per plane of the allocation
 
-	int64_t d0_start_offset = 0;
-	int64_t d1_start_offset = 0;
-	int64_t d2_start_offset = 0;
+	int64_t d0_start_offset = 0; // bytes into the row
+	int64_t d1_start_offset = 0; // rows into the plane
+	int64_t d2_start_offset = 0; // planes into the allocation
 
 	int64_t d0_end_offset = 0;
 	int64_t d1_end_offset = 0;
@@ -76,10 +77,10 @@ struct data_layout {
 			d0_end_offset(d0_end_offset), d1_end_offset(d1_end_offset), d2_end_offset(d2_end_offset),
 			start(0), end((d2_end_offset-d2_start_offset)*(d1_end_offset-d1_start_offset)*(d0_end_offset-d0_start_offset)){};
 	// the same box and window as `layout`, but in the allocation at `base`
-	data_layout(intptr_t base, const data_layout& layout):base(layout.base), d0_stride(layout.d0_stride), d1_stride(layout.d1_stride),
+	data_layout(intptr_t base, const data_layout& layout):base(base), d0_stride(layout.d0_stride), d1_stride(layout.d1_stride),
 			d0_start_offset(layout.d0_start_offset), d1_start_offset(layout.d1_start_offset), d2_start_offset(layout.d2_start_offset),
 			d0_end_offset(layout.d0_end_offset), d1_end_offset(layout.d1_end_offset), d2_end_offset(layout.d2_end_offset),
-			start(layout.end), end(layout.end){};
+			start(layout.start), end(layout.end){};
 
 	data_layout(staging_id staging, int64_t offset, int64_t length):staging(staging), d0_stride(length+offset), d1_stride(1),
 		d0_start_offset(offset), d1_start_offset(0), d2_start_offset(0), d0_end_offset(length+offset), d1_end_offset(1), d2_end_offset(1),
@@ -93,11 +94,14 @@ struct data_layout {
 	data_layout(staging_id staging, const data_layout& layout):staging(staging), d0_stride(layout.d0_stride), d1_stride(layout.d1_stride),
 			d0_start_offset(layout.d0_start_offset), d1_start_offset(layout.d1_start_offset), d2_start_offset(layout.d2_start_offset),
 			d0_end_offset(layout.d0_end_offset), d1_end_offset(layout.d1_end_offset), d2_end_offset(layout.d2_end_offset),
-			start(layout.end), end(layout.end){};
+			start(layout.start), end(layout.end){};
 
 	// the same layout with the window narrowed to [start, end)
 	[[nodiscard]] data_layout with_window(int64_t start, int64_t end) const{
-		return data_layout(this->base, *this);
+		data_layout layout(this->base, *this);
+		layout.start = start;
+		layout.end = end;
+		return layout;
 	};
 
 	// the number of bytes this layout actually copies, i.e. the length of its window
@@ -112,7 +116,7 @@ struct data_layout {
 
 	// offset just past the last byte of the box, relative to the allocation base, for bounds checks against a buffer size
 	[[nodiscard]] constexpr int64_t end_offset() const {
-		return d2_end_offset*d1_stride + d1_end_offset*d0_stride + d0_end_offset;
+		return (d2_end_offset-1)*d1_stride*d0_stride + (d1_end_offset-1)*d0_stride + d0_end_offset;
 	}
 
 	// byte offset in the allocation of the byte `packed_offset` bytes into the box, with the gaps excluded.
@@ -121,7 +125,7 @@ struct data_layout {
 		int64_t d0_size = d0_end_offset - d0_start_offset;
 		int64_t d1_size = d0_size * (d1_end_offset - d1_start_offset);
 		int64_t i_d0 = packed_offset % d0_size;
-		int64_t i_d1 = packed_offset % d1_size;
+		int64_t i_d1 = (packed_offset % d1_size) / d0_size;
 		int64_t i_d2 = packed_offset / d1_size;
 		//byte packed_offset sits at box[i_d2][i_d1][i_d0]
 		return (i_d2 + d2_start_offset) * d1_stride * d0_stride + (i_d1 + d1_start_offset) * d0_stride + (i_d0 + d0_start_offset);
@@ -135,28 +139,16 @@ struct data_layout {
 	}    // planes are adjacent, so they can be collapsed
 
 	// shape predicates, all defined over the window rather than over the whole box
-	[[nodiscard]] constexpr bool is_contiguous() const { 
-		int64_t d0_size = d0_end_offset - d0_start_offset;
-		int64_t d1_size = d0_size * (d1_end_offset - d1_start_offset);
-
-//		bool d1_contigious = d0_start_offset == 0 && d0_end_offset == d0_stride;
-//		bool d2_contigious = d1_contigious && (d1_start_offset == 0 && d1_end_offset == d1_stride);
-		
-		int64_t i_d1_end = end % d1_size;
-		int64_t i_d2_end = end / d1_size;
-		
-		int64_t i_d1_start = start % d1_size;
-		int64_t i_d2_start = start / d1_size;
-		
-		if(i_d2_end != i_d2_start && d2_contigious()){
-			return false;
+	[[nodiscard]] constexpr bool is_window_contiguous() const { 
+		if(d2_contigious()) return true; // the whole box is one run
+		const int64_t d0_extent = d0_end_offset - d0_start_offset;
+		const int64_t last = end - 1;
+		if(d1_contigious()) { // each plane is one run
+			const int64_t d1_extent = d0_extent * (d1_end_offset - d1_start_offset);
+			return start / d1_extent == last / d1_extent;
 		}
-		if(i_d1_end != i_d1_start && d1_contigious()){
-			return false;
-		}
-
-		return true;
-	}        // the window is a single contiguous run
+		return start / d0_extent == last / d0_extent; // inside a single row
+	}
 	
 	[[nodiscard]] constexpr bool is_unplaced_staging() const {
 		return staging.is_staging_id == staging_id::staging_id_flag;
@@ -173,7 +165,7 @@ struct data_layout {
 		&& other.d0_end_offset == d0_end_offset
 		&& other.d1_end_offset == d1_end_offset
 		&& other.d2_end_offset == d2_end_offset
-		&& other.d0_start_offset == d0_end_offset
+		&& other.d0_start_offset == d0_start_offset
 		&& other.d1_start_offset == d1_start_offset
 		&& other.d2_start_offset == d2_start_offset
 		&& other.start == start
@@ -187,9 +179,8 @@ struct data_layout {
 };
 
 // Invokes f(offset_in_allocation, run_length) for each contiguous run of bytes covered by the layout's window.
-// This is the iteration primitive for the copy paths, the host memcpy fallback, the coverage check in is_equivalent and
-// the reference implementation in the tests. Per-fragment indexing cannot serve that purpose, because a window may
-// start or end in the middle of a row, making its first and last runs partial.
+// This is the iteration primitive for the copy paths and the host memcpy fallback. Per-fragment indexing cannot serve
+// that purpose, because a window may start or end in the middle of a row, making its first and last runs partial.
 template <typename F>
 void for_each_contiguous_run(const data_layout& layout, F&& f) {
 	(void)layout, (void)f; // TODO: implement
@@ -282,6 +273,21 @@ data_layout normalize(const data_layout& layout);
 // Normalize each layout of a copy spec independently. Each side is read in its own packed order, so this preserves
 // exactly what the spec copies.
 copy_spec normalize(const copy_spec& spec);
+
+// The widest element the copy kernels can use, i.e. the largest power of two up to 64 dividing the row extents and
+// `d0_stride` of both sides. Chunk boundaries are multiples of it and `chunk_size` must be at least it.
+inline int64_t copy_alignment(const copy_spec& spec){
+	int64_t alignment = 64;
+	int64_t source_width = spec.source_layout.d0_end_offset - spec.source_layout.d0_start_offset;
+	int64_t target_width = spec.target_layout.d0_end_offset - spec.target_layout.d0_start_offset;
+	for(; alignment > 1; alignment >>= 1){
+		if(source_width % alignment == 0 && target_width % alignment == 0
+			&& spec.source_layout.d0_stride % alignment == 0 && spec.target_layout.d0_stride % alignment == 0){
+			break;
+		}
+	}
+	return alignment;
+};
 
 // apply chunking to the given copy spec if requested by the strategy
 parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& strategy);

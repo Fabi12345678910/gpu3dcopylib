@@ -7,13 +7,15 @@
 // Layer 2: the validity rules for layouts, specs, plans and sets, as listed in docs/design.md.
 //
 // Every case pairs the rejection of a malformed input with the acceptance of a well-formed one. That matters while
-// `is_valid` is a placeholder returning false: without the positive check, a rejection test would pass for the wrong
-// reason and report progress that is not there.
+// `is_valid` is incomplete: without the positive check, a rejection test would pass for the wrong reason and report
+// progress that is not there.
 
 using namespace copylib;
 using copylib_testing::layout_from_fields;
 using copylib_testing::spec_from_fields;
+using copylib_testing::with_window_fields;
 namespace ref = copylib_testing::reference_box;
+namespace shapes = copylib_testing::shapes;
 
 TEST_CASE("a well-formed layout is valid", "[validation][!mayfail]") {
 	CHECK(is_valid(ref::fields()));
@@ -31,65 +33,60 @@ TEST_CASE("strides must be non-zero", "[validation][!mayfail]") {
 	CHECK_FALSE(is_valid(no_d1));
 }
 
-TEST_CASE("the plane stride must be a multiple of the row stride", "[validation][!mayfail]") {
-	CHECK(is_valid(ref::fields()));
-
-	auto layout = ref::fields();
-	layout.d1_stride = ref::d1_stride + 1;
-	CHECK_FALSE(is_valid(layout));
-}
-
-TEST_CASE("offsets must be aligned to the enclosing stride", "[validation][!mayfail]") {
-	CHECK(is_valid(ref::fields()));
-
-	SECTION("d1 offsets are multiples of the row stride") {
-		auto layout = ref::fields();
-		layout.d1_start_offset = ref::d1_start_offset + 1;
-		CHECK_FALSE(is_valid(layout));
-	}
-
-	SECTION("d2 offsets are multiples of the plane stride") {
-		auto layout = ref::fields();
-		layout.d2_end_offset = ref::d2_end_offset + 1;
-		CHECK_FALSE(is_valid(layout));
-	}
-}
-
-TEST_CASE("the box must fit within the strides", "[validation][!mayfail]") {
+TEST_CASE("the box must lie inside one row and one plane", "[validation][!mayfail]") {
+	// this is also what makes the encoding canonical: a box that could be expressed by moving whole rows or planes
+	// into the next dimension has more than one encoding, which would break operator== and hashing
 	CHECK(is_valid(ref::fields()));
 
 	SECTION("a row may not be longer than the row stride") {
 		auto layout = ref::fields();
-		layout.d0_start_offset = 0;
 		layout.d0_end_offset = ref::d0_stride + ref::elem_size;
 		CHECK_FALSE(is_valid(layout));
 	}
 
-	SECTION("a plane may not hold more rows than the plane stride") {
+	SECTION("a row may not start past the row stride") {
 		auto layout = ref::fields();
-		layout.d1_start_offset = 0;
-		layout.d1_end_offset = ref::d1_stride + ref::d0_stride;
+		layout.d0_start_offset = ref::d0_stride;
+		layout.d0_end_offset = ref::d0_stride + ref::row_extent;
+		CHECK_FALSE(is_valid(layout));
+	}
+
+	SECTION("a box may not hold more rows than a plane has") {
+		auto layout = ref::fields();
+		layout.d1_end_offset = ref::d1_stride + 1;
+		CHECK_FALSE(is_valid(layout));
+	}
+
+	SECTION("a box may not start past the last row of a plane") {
+		auto layout = ref::fields();
+		layout.d1_start_offset = ref::d1_stride;
+		layout.d1_end_offset = ref::d1_stride + 1;
 		CHECK_FALSE(is_valid(layout));
 	}
 }
 
-TEST_CASE("the encoding must be canonical", "[validation][!mayfail]") {
-	// Otherwise one box has several encodings, which breaks operator==, hashing and plan chaining.
+TEST_CASE("every dimension must be non-empty", "[validation][!mayfail]") {
 	CHECK(is_valid(ref::fields()));
 
-	SECTION("the row offset is inside one row") {
+	for(const int dimension : {0, 1, 2}) {
+		CAPTURE(dimension);
 		auto layout = ref::fields();
-		layout.d0_start_offset = ref::d0_stride + ref::d0_start_offset;
-		layout.d0_end_offset = ref::d0_stride + ref::d0_end_offset;
+		if(dimension == 0) { layout.d0_end_offset = layout.d0_start_offset; }
+		if(dimension == 1) { layout.d1_end_offset = layout.d1_start_offset; }
+		if(dimension == 2) { layout.d2_end_offset = layout.d2_start_offset; }
 		CHECK_FALSE(is_valid(layout));
 	}
+}
 
-	SECTION("the plane offset is inside one plane") {
-		auto layout = ref::fields();
-		layout.d1_start_offset = ref::d1_stride + ref::d1_start_offset;
-		layout.d1_end_offset = ref::d1_stride + ref::d1_end_offset;
-		CHECK_FALSE(is_valid(layout));
-	}
+TEST_CASE("the plane count of the allocation is not bounded", "[validation][!mayfail]") {
+	// there is no d2_stride, so nothing says how many planes the allocation has
+	auto layout = ref::fields();
+	layout.d2_start_offset = 1000;
+	layout.d2_end_offset = 1003;
+	CHECK(is_valid(layout));
+
+	layout.d2_start_offset = -1;
+	CHECK_FALSE(is_valid(layout));
 }
 
 TEST_CASE("the base must be at least 2-byte aligned", "[validation][!mayfail]") {
@@ -123,10 +120,7 @@ TEST_CASE("the window must lie within the box", "[validation][window][!mayfail]"
 	}
 
 	SECTION("a sub-window of the box is valid") {
-		auto layout = ref::fields();
-		layout.start = ref::row_extent;
-		layout.end = 2 * ref::row_extent;
-		CHECK(is_valid(layout));
+		CHECK(is_valid(with_window_fields(ref::fields(), ref::row_extent, 2 * ref::row_extent)));
 	}
 }
 
@@ -134,27 +128,27 @@ TEST_CASE("a copy spec requires equal window lengths on both sides", "[validatio
 	const auto source = ref::fields();
 
 	SECTION("equal windows are valid") {
-		auto target = ref::fields();
-		target.base = ref::base + 0x10000;
-		CHECK(is_valid(spec_from_fields(device_id::d0, source, device_id::d1, target)));
+		CHECK(is_valid(spec_from_fields(device_id::d0, source, device_id::d1, ref::fields(0x80000))));
 	}
 
 	SECTION("differing window lengths are not") {
-		auto target = ref::fields();
-		target.base = ref::base + 0x10000;
+		auto target = ref::fields(0x80000);
 		target.end = ref::total_bytes - ref::elem_size;
 		CHECK_FALSE(is_valid(spec_from_fields(device_id::d0, source, device_id::d1, target)));
+	}
+
+	SECTION("boxes of different sizes are fine as long as the windows match") {
+		// a staged chunk: half of the box gathered into a buffer that holds exactly those bytes
+		const auto half = with_window_fields(source, 0, ref::total_bytes / 2);
+		const auto buffer = copylib_testing::staging_layout_from_fields(copylib_testing::staging_id_from_fields(false, device_id::d0, 0), ref::total_bytes / 2);
+		CHECK(is_valid(spec_from_fields(device_id::d0, half, device_id::d0, buffer)));
 	}
 }
 
 TEST_CASE("a reshaping copy spec is valid", "[validation][!mayfail]") {
 	// design.md: source and target may have different shapes, so int[1,1,6] -> int[1,2,3] is allowed
-	constexpr int64_t elem = ref::elem_size;
-
-	// int[1,1,6]: one row of 6 elements
-	const auto source = layout_from_fields(0x10000, 6 * elem, 6 * elem, 0, 0, 0, 6 * elem, 6 * elem, 6 * elem, 0, 6 * elem);
-	// int[1,2,3]: two rows of 3 elements
-	const auto target = layout_from_fields(0x20000, 3 * elem, 6 * elem, 0, 0, 0, 3 * elem, 6 * elem, 6 * elem, 0, 6 * elem);
+	const auto source = shapes::one_row_of_six(0x10000);
+	const auto target = shapes::two_rows_of_three(0x20000);
 
 	CHECK(is_valid(source));
 	CHECK(is_valid(target));
@@ -165,10 +159,7 @@ TEST_CASE("an empty copy plan or set is invalid", "[validation][!mayfail]") {
 	CHECK_FALSE(is_valid(copy_plan{}));
 	CHECK_FALSE(is_valid(parallel_copy_set{}));
 
-	auto target = ref::fields();
-	target.base = ref::base + 0x10000;
-	const auto spec = spec_from_fields(device_id::d0, ref::fields(), device_id::d1, target);
-
+	const auto spec = ref::spec();
 	CHECK(is_valid(copy_plan{spec}));
 	CHECK(is_valid(parallel_copy_set{copy_plan{spec}}));
 }

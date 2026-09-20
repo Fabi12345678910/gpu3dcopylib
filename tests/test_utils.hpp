@@ -46,7 +46,7 @@ namespace copylib_testing {
 
 // a contiguous 1D layout of `length` bytes at the start of an unplaced staging buffer
 [[nodiscard]] inline copylib::data_layout staging_layout_from_fields(copylib::staging_id staging, int64_t length) {
-	auto layout = layout_from_fields(0, length, length, 0, 0, 0, length, length, length, 0, length);
+	auto layout = layout_from_fields(0, length, 1, 0, 0, 0, length, 1, 1, 0, length);
 	layout.staging = staging;
 	return layout;
 }
@@ -115,8 +115,7 @@ namespace copylib_testing {
 [[nodiscard]] inline int64_t row_extent_of(const copylib::data_layout& l) { return l.d0_end_offset - l.d0_start_offset; }
 
 [[nodiscard]] inline int64_t rows_in_box(const copylib::data_layout& l) {
-	if(l.d0_stride <= 0 || l.d1_stride <= 0) return 0;
-	return (l.d1_end_offset - l.d1_start_offset) / l.d0_stride * ((l.d2_end_offset - l.d2_start_offset) / l.d1_stride);
+	return (l.d1_end_offset - l.d1_start_offset) * (l.d2_end_offset - l.d2_start_offset);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -127,20 +126,20 @@ namespace copylib_testing {
 // Returns an empty vector for layouts that do not describe a non-empty box and window.
 [[nodiscard]] inline std::vector<int64_t> reference_offsets(const copylib::data_layout& l) {
 	const int64_t row_extent = l.d0_end_offset - l.d0_start_offset;
-	if(l.d0_stride <= 0 || l.d1_stride <= 0 || row_extent <= 0) return {};
-	const int64_t rows = (l.d1_end_offset - l.d1_start_offset) / l.d0_stride;
-	const int64_t planes = (l.d2_end_offset - l.d2_start_offset) / l.d1_stride;
-	if(rows <= 0 || planes <= 0) return {};
-	const int64_t plane_bytes = row_extent * rows;
-	if(l.start < 0 || l.end > plane_bytes * planes || l.start >= l.end) return {};
+	const int64_t rows = l.d1_end_offset - l.d1_start_offset;
+	const int64_t planes = l.d2_end_offset - l.d2_start_offset;
+	if(l.d0_stride <= 0 || l.d1_stride <= 0 || row_extent <= 0 || rows <= 0 || planes <= 0) return {};
+	const int64_t plane_bytes = l.d1_stride * l.d0_stride; // in the allocation
+	const int64_t box_plane_bytes = row_extent * rows;     // in the box, gaps excluded
+	if(l.start < 0 || l.end > box_plane_bytes * planes || l.start >= l.end) return {};
 
 	std::vector<int64_t> offsets;
 	offsets.reserve(static_cast<size_t>(l.end - l.start));
 	for(int64_t p = l.start; p < l.end; ++p) {
-		const int64_t plane = p / plane_bytes;
-		const int64_t row = (p % plane_bytes) / row_extent;
+		const int64_t plane = p / box_plane_bytes;
+		const int64_t row = (p % box_plane_bytes) / row_extent;
 		const int64_t col = p % row_extent;
-		offsets.push_back(l.d2_start_offset + plane * l.d1_stride + l.d1_start_offset + row * l.d0_stride + l.d0_start_offset + col);
+		offsets.push_back((plane + l.d2_start_offset) * plane_bytes + (row + l.d1_start_offset) * l.d0_stride + col + l.d0_start_offset);
 	}
 	return offsets;
 }
@@ -256,9 +255,8 @@ struct simulation {
 	return mapping;
 }
 
-// The ground truth for is_equivalent: correct result, every target byte written exactly once (design.md calls
-// is_equivalent a tiling check, so overlapping chunks do not count even though they produce the right bytes), and no
-// two plans of a set touching the same memory.
+// The ground truth for the planning layers: correct result, every target byte written exactly once (overlapping chunks
+// do not count even though they produce the right bytes), and no two plans of a set touching the same memory.
 [[nodiscard]] inline bool implements(const simulation& sim, const copylib::copy_spec& spec) {
 	return sim.consistent && !sim.conflicting && sim.max_writes == 1 && !sim.final_state.empty() && sim.final_state == expected_mapping(spec);
 }
@@ -278,23 +276,24 @@ namespace reference_box {
 	constexpr int64_t d0_extent = 20; // elements per row
 	constexpr int64_t d1_extent = 16; // rows per plane
 
-	constexpr int64_t d0_stride = d0_extent * elem_size; // 80, one full row
-	constexpr int64_t d1_stride = d1_extent * d0_stride; // 1280, one full plane
+	constexpr int64_t d0_stride = d0_extent * elem_size; // 80 bytes, one full row
+	constexpr int64_t d1_stride = d1_extent;             // 16 rows, one full plane
+	constexpr int64_t plane_bytes = d1_stride * d0_stride; // 1280
 
-	constexpr int64_t d0_start_offset = 4 * elem_size; // 16
-	constexpr int64_t d0_end_offset = 10 * elem_size;  // 40
-	constexpr int64_t d1_start_offset = 3 * d0_stride; // 240
-	constexpr int64_t d1_end_offset = 7 * d0_stride;   // 560
-	constexpr int64_t d2_start_offset = 2 * d1_stride; // 2560
-	constexpr int64_t d2_end_offset = 5 * d1_stride;   // 6400
+	constexpr int64_t d0_start_offset = 4 * elem_size; // 16 bytes
+	constexpr int64_t d0_end_offset = 10 * elem_size;  // 40 bytes
+	constexpr int64_t d1_start_offset = 3;             // rows
+	constexpr int64_t d1_end_offset = 7;
+	constexpr int64_t d2_start_offset = 2;             // planes
+	constexpr int64_t d2_end_offset = 5;
 
-	constexpr int64_t row_extent = d0_end_offset - d0_start_offset;           // 24 bytes
-	constexpr int64_t rows = (d1_end_offset - d1_start_offset) / d0_stride;   // 4
-	constexpr int64_t planes = (d2_end_offset - d2_start_offset) / d1_stride; // 3
-	constexpr int64_t total_bytes = row_extent * rows * planes;               // 288
+	constexpr int64_t row_extent = d0_end_offset - d0_start_offset; // 24 bytes
+	constexpr int64_t rows = d1_end_offset - d1_start_offset;       // 4
+	constexpr int64_t planes = d2_end_offset - d2_start_offset;     // 3
+	constexpr int64_t total_bytes = row_extent * rows * planes;     // 288
 
 	// offset of the first byte of the box relative to the allocation base
-	constexpr int64_t first_byte = d0_start_offset + d1_start_offset + d2_start_offset; // 2816
+	constexpr int64_t first_byte = d2_start_offset * plane_bytes + d1_start_offset * d0_stride + d0_start_offset; // 2816
 
 	// largest power of two up to 64 dividing the row extent and both strides (24, 80, 1280)
 	constexpr int64_t alignment = 8;
@@ -329,19 +328,18 @@ namespace shapes {
 	// the whole allocation: every row of every plane, no gaps
 	[[nodiscard]] inline copylib::data_layout whole_allocation(intptr_t at = ref::base) {
 		constexpr int64_t planes = 12;
-		return layout_from_fields(at, ref::d0_stride, ref::d1_stride, 0, 0, 0, ref::d0_stride, ref::d1_stride, planes * ref::d1_stride, 0, planes * ref::d1_stride);
+		return layout_from_fields(at, ref::d0_stride, ref::d1_stride, 0, 0, 0, ref::d0_stride, ref::d1_stride, planes, 0, planes * ref::plane_bytes);
 	}
 
 	// a single partial row of the first plane
 	[[nodiscard]] inline copylib::data_layout single_row(intptr_t at = ref::base) {
-		return layout_from_fields(
-		    at, ref::d0_stride, ref::d1_stride, ref::d0_start_offset, 0, 0, ref::d0_end_offset, ref::d0_stride, ref::d1_stride, 0, ref::row_extent);
+		return layout_from_fields(at, ref::d0_stride, ref::d1_stride, ref::d0_start_offset, 0, 0, ref::d0_end_offset, 1, 1, 0, ref::row_extent);
 	}
 
 	// four full rows of the first plane, which form one contiguous run
 	[[nodiscard]] inline copylib::data_layout full_rows_of_one_plane(intptr_t at = ref::base) {
 		return layout_from_fields(
-		    at, ref::d0_stride, ref::d1_stride, 0, ref::d1_start_offset, 0, ref::d0_stride, ref::d1_end_offset, ref::d1_stride, 0, ref::rows * ref::d0_stride);
+		    at, ref::d0_stride, ref::d1_stride, 0, ref::d1_start_offset, 0, ref::d0_stride, ref::d1_end_offset, 1, 0, ref::rows * ref::d0_stride);
 	}
 
 	// four full rows in each of three planes: one contiguous run per plane
@@ -353,18 +351,18 @@ namespace shapes {
 	// partial rows spanning all 16 rows of two consecutive planes: since a plane is exactly 16 rows, the rows continue
 	// across the plane boundary with the same spacing, even though no two of them are adjacent
 	[[nodiscard]] inline copylib::data_layout partial_rows_of_two_full_planes(intptr_t at = ref::base) {
-		return layout_from_fields(at, ref::d0_stride, ref::d1_stride, ref::d0_start_offset, 0, 0, ref::d0_end_offset, ref::d1_stride, 2 * ref::d1_stride,
-		    0, ref::row_extent * ref::d1_extent * 2);
+		return layout_from_fields(at, ref::d0_stride, ref::d1_stride, ref::d0_start_offset, 0, 0, ref::d0_end_offset, ref::d1_stride, 2, 0,
+		    ref::row_extent * ref::d1_extent * 2);
 	}
 
 	// int[1,1,6] and int[1,2,3], the reshaping pair from design.md
 	[[nodiscard]] inline copylib::data_layout one_row_of_six(intptr_t at) {
 		constexpr int64_t e = ref::elem_size;
-		return layout_from_fields(at, 6 * e, 6 * e, 0, 0, 0, 6 * e, 6 * e, 6 * e, 0, 6 * e);
+		return layout_from_fields(at, 6 * e, 1, 0, 0, 0, 6 * e, 1, 1, 0, 6 * e);
 	}
 	[[nodiscard]] inline copylib::data_layout two_rows_of_three(intptr_t at) {
 		constexpr int64_t e = ref::elem_size;
-		return layout_from_fields(at, 3 * e, 6 * e, 0, 0, 0, 3 * e, 6 * e, 6 * e, 0, 6 * e);
+		return layout_from_fields(at, 3 * e, 2, 0, 0, 0, 3 * e, 2, 1, 0, 6 * e);
 	}
 
 } // namespace shapes
@@ -373,18 +371,17 @@ namespace shapes {
 // encodings in the same terms as the design table. Windows cover the whole box.
 namespace normal_form {
 
-	// 1D: a single contiguous run of `length` bytes at `offset`; both strides are the end of the run
+	// 1D: a single contiguous run of `length` bytes at `offset`; the row stride is the end of the run
 	[[nodiscard]] inline copylib::data_layout one_run(intptr_t at, int64_t offset, int64_t length) {
-		const int64_t stride = offset + length;
-		return layout_from_fields(at, stride, stride, offset, 0, 0, offset + length, stride, stride, 0, length);
+		return layout_from_fields(at, offset + length, 1, offset, 0, 0, offset + length, 1, 1, 0, length);
 	}
 
-	// 2D: `count` runs of `length` bytes, the first at `offset`, spaced `spacing` apart
+	// 2D: `count` runs of `length` bytes, the first at `offset`, spaced `spacing` bytes apart
 	[[nodiscard]] inline copylib::data_layout uniform_runs(intptr_t at, int64_t offset, int64_t length, int64_t count, int64_t spacing) {
 		const int64_t in_row = offset % spacing;
-		const int64_t first_row = offset - in_row;
-		const int64_t d1_end = first_row + count * spacing;
-		return layout_from_fields(at, spacing, d1_end, in_row, first_row, 0, in_row + length, d1_end, d1_end, 0, count * length);
+		const int64_t first_row = offset / spacing;
+		const int64_t rows = first_row + count;
+		return layout_from_fields(at, spacing, rows, in_row, first_row, 0, in_row + length, rows, 1, 0, count * length);
 	}
 
 } // namespace normal_form
