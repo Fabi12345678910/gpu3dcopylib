@@ -8,73 +8,89 @@
 
 namespace copylib {
 
-staging_id::staging_id(bool on_host, device_id did, uint32_t index) {}
+bool is_valid(const data_layout& layout) {
+    return layout.d0_stride > 0 && layout.d1_stride > 0
+        && layout.d0_end_offset > layout.d0_start_offset
+        && layout.d1_end_offset > layout.d1_start_offset
+        && layout.d2_end_offset > layout.d2_start_offset
+        && layout.end > layout.start
+        && layout.d0_end_offset <= layout.d0_stride
+        && layout.d1_end_offset <= layout.d1_stride
+        //confirm end actually is inside the copy box
+        && (layout.d2_end_offset - layout.d2_start_offset) * 
+           (layout.d1_end_offset - layout.d1_start_offset) *
+           (layout.d0_end_offset - layout.d0_start_offset) >= layout.end;
+}
 
-data_layout::data_layout(intptr_t base, int64_t offset, int64_t length) {}
+bool is_valid(const copy_spec& spec) {
+    return is_valid(spec.source_layout) && is_valid(spec.target_layout)
+        && spec.source_layout.total_bytes() == spec.target_layout.total_bytes();
+}
 
-data_layout::data_layout(intptr_t base, int64_t d0_stride, int64_t d1_stride, int64_t d0_start_offset, int64_t d1_start_offset, int64_t d2_start_offset,
-    int64_t d0_end_offset, int64_t d1_end_offset, int64_t d2_end_offset) {}
+bool is_valid(const copy_plan& plan) {
+    for (const copy_spec& spec : plan) {
+        if(!is_valid(spec)){return false;};
+    }
+    return true;
+}
 
-data_layout::data_layout(intptr_t base, const data_layout& layout) {}
+bool is_valid(const parallel_copy_set& set) { 
+    for (const copy_plan& spec : set) {
+        if(!is_valid(spec)){return false;};
+    }
+    return true;}
 
-data_layout::data_layout(staging_id staging, int64_t offset, int64_t length) {}
+bool collapse_d1_onto_d0(data_layout& layout){
+    if(!layout.d1_contigious()) return false;
 
-data_layout::data_layout(staging_id staging, int64_t d0_stride, int64_t d1_stride, int64_t d0_start_offset, int64_t d1_start_offset, int64_t d2_start_offset,
-    int64_t d0_end_offset, int64_t d1_end_offset, int64_t d2_end_offset) {}
+    data_layout old_layout(layout);
+    //collapse d1 onto d0
+    layout.d0_stride = old_layout.d0_stride * old_layout.d1_stride;
+    layout.d0_start_offset = old_layout.d1_start_offset * old_layout.d0_stride;
+    layout.d0_end_offset = old_layout.d1_end_offset * old_layout.d0_stride;
 
-data_layout::data_layout(staging_id staging, const data_layout& layout) {}
+    layout.d1_start_offset = old_layout.d2_start_offset;
+    layout.d1_end_offset = old_layout.d2_end_offset;
 
-data_layout data_layout::with_window(int64_t start, int64_t end) const { return {}; }
+    layout.d1_stride = 1;
+    layout.d2_start_offset = 0;
+    layout.d2_end_offset = 1;
+    return true;
+}
 
-bool data_layout::operator==(const data_layout& other) const { return {}; }
+bool collapse_d2_onto_d1(data_layout& layout){
+    if(!((layout.d1_start_offset == 0 && layout.d1_end_offset == layout.d1_stride))) return false;
 
-bool data_layout::operator!=(const data_layout& other) const { return {}; }
+    data_layout old_layout(layout);
+    //collapse d1 onto d0
+ //   layout.d0_stride = old_layout.d0_stride * old_layout.d1_stride;
+ //   layout.d0_start_offset = old_layout.d1_start_offset * old_layout.d0_stride;
+ //   layout.d0_end_offset = old_layout.d1_end_offset * old_layout.d0_stride;
 
-copy_properties operator|(copy_properties a, copy_properties b) { return {}; }
+    layout.d1_start_offset = old_layout.d2_start_offset * old_layout.d1_stride;
+    layout.d1_end_offset = old_layout.d2_end_offset * old_layout.d1_stride;
 
-bool operator&(copy_properties a, copy_properties b) { return {}; }
+    layout.d1_stride = 1;
+    layout.d2_start_offset = 0;
+    layout.d2_end_offset = 1;
+    return true;
+}
 
-copy_spec::copy_spec(device_id src_dev, const data_layout& src_layout, device_id tgt_dev, const data_layout& tgt_layout)
-    : source_device(src_dev), target_device(tgt_dev) {}
+data_layout normalize(const data_layout& layout) {
+    if(layout.d2_contigious()) return layout;
+    
+    data_layout new_layout(layout);
+    collapse_d2_onto_d1(new_layout);
+    collapse_d1_onto_d0(new_layout);
+    return new_layout;
+}
 
-copy_spec::copy_spec(device_id src_dev, const data_layout& src_layout, device_id tgt_dev, const data_layout& tgt_layout, copy_properties p)
-    : source_device(src_dev), target_device(tgt_dev) {}
-
-bool copy_spec::is_contiguous() const { return {}; }
-
-// copy_spec has no default constructor, so the placeholder returns the input unchanged
-copy_spec copy_spec::with_properties(copy_properties p) const { return *this; }
-
-copy_strategy::copy_strategy(copy_type t) {}
-
-copy_strategy::copy_strategy(int64_t c) {}
-
-copy_strategy::copy_strategy(copy_type t, copy_properties p) {}
-
-copy_strategy::copy_strategy(copy_type t, copy_properties p, d2d_implementation d) {}
-
-copy_strategy::copy_strategy(copy_type t, copy_properties p, int64_t c) {}
-
-copy_strategy::copy_strategy(copy_type t, copy_properties p, d2d_implementation d, int64_t c) {}
-
-bool is_valid(const data_layout& layout) { return {}; }
-
-bool is_valid(const copy_spec& spec) { return {}; }
-
-bool is_valid(const copy_plan& plan) { return {}; }
-
-bool is_valid(const parallel_copy_set& set) { return {}; }
-
-bool is_equivalent(const copy_plan& plan, const copy_spec& spec) { return {}; }
-
-bool is_equivalent(const parallel_copy_set& set, const copy_spec& spec) { return {}; }
-
-data_layout normalize(const data_layout& layout) { return {}; }
-
-// copy_spec has no default constructor, so the placeholder returns the input unchanged
-copy_spec normalize(const copy_spec& spec) { return spec; }
-
-copy_spec apply_properties(const copy_spec& spec, const copy_properties& props) { return spec; }
+copy_spec normalize(const copy_spec& spec) {
+    if(spec.source_layout.d2_contigious() && spec.target_layout.d2_contigious()) {
+        return spec;
+    }
+    return {spec.source_device, normalize(spec.source_layout), spec.target_device, normalize(spec.target_layout), spec.properties};
+}
 
 parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& strategy) { return {}; }
 

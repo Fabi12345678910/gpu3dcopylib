@@ -31,7 +31,7 @@ struct staging_id {
 	uint32_t index = 0;
 
 	staging_id() = default;
-	staging_id(bool on_host, device_id did, uint32_t index);
+	staging_id(bool on_host, device_id did, uint32_t index) : on_host(on_host), did(did), index(index) {}
 
 	constexpr bool operator==(const staging_id& other) const = default;
 	constexpr bool operator!=(const staging_id& other) const = default;
@@ -67,44 +67,123 @@ struct data_layout {
 	data_layout() = default;
 
 	// a contiguous 1D layout of `length` bytes, starting `offset` bytes into the allocation
-	data_layout(intptr_t base, int64_t offset, int64_t length);
+	data_layout(intptr_t base, int64_t offset, int64_t length):base(base), d0_stride(length+offset), d1_stride(1),
+		d0_start_offset(offset), d1_start_offset(0), d2_start_offset(0), d0_end_offset(length+offset), d1_end_offset(1), d2_end_offset(1),
+		start(0), end(length){};
 	data_layout(intptr_t base, int64_t d0_stride, int64_t d1_stride, int64_t d0_start_offset, int64_t d1_start_offset, int64_t d2_start_offset,
-	    int64_t d0_end_offset, int64_t d1_end_offset, int64_t d2_end_offset);
+	    int64_t d0_end_offset, int64_t d1_end_offset, int64_t d2_end_offset):base(base), d0_stride(d0_stride), d1_stride(d1_stride),
+			d0_start_offset(d0_start_offset), d1_start_offset(d1_start_offset), d2_start_offset(d2_start_offset),
+			d0_end_offset(d0_end_offset), d1_end_offset(d1_end_offset), d2_end_offset(d2_end_offset),
+			start(0), end((d2_end_offset-d2_start_offset)*(d1_end_offset-d1_start_offset)*(d0_end_offset-d0_start_offset)){};
 	// the same box and window as `layout`, but in the allocation at `base`
-	data_layout(intptr_t base, const data_layout& layout);
+	data_layout(intptr_t base, const data_layout& layout):base(layout.base), d0_stride(layout.d0_stride), d1_stride(layout.d1_stride),
+			d0_start_offset(layout.d0_start_offset), d1_start_offset(layout.d1_start_offset), d2_start_offset(layout.d2_start_offset),
+			d0_end_offset(layout.d0_end_offset), d1_end_offset(layout.d1_end_offset), d2_end_offset(layout.d2_end_offset),
+			start(layout.end), end(layout.end){};
 
-	data_layout(staging_id staging, int64_t offset, int64_t length);
+	data_layout(staging_id staging, int64_t offset, int64_t length):staging(staging), d0_stride(length+offset), d1_stride(1),
+		d0_start_offset(offset), d1_start_offset(0), d2_start_offset(0), d0_end_offset(length+offset), d1_end_offset(1), d2_end_offset(1),
+		start(0), end(length){};
 	data_layout(staging_id staging, int64_t d0_stride, int64_t d1_stride, int64_t d0_start_offset, int64_t d1_start_offset, int64_t d2_start_offset,
-	    int64_t d0_end_offset, int64_t d1_end_offset, int64_t d2_end_offset);
-	data_layout(staging_id staging, const data_layout& layout);
+	    int64_t d0_end_offset, int64_t d1_end_offset, int64_t d2_end_offset):staging(staging), d0_stride(d0_stride), d1_stride(d1_stride),
+			d0_start_offset(d0_start_offset), d1_start_offset(d1_start_offset), d2_start_offset(d2_start_offset),
+			d0_end_offset(d0_end_offset), d1_end_offset(d1_end_offset), d2_end_offset(d2_end_offset),
+			start(0), end((d2_end_offset-d2_start_offset)*(d1_end_offset-d1_start_offset)*(d0_end_offset-d0_start_offset)){};
+	// the same box and window as `layout`, but in the allocation at `base`
+	data_layout(staging_id staging, const data_layout& layout):staging(staging), d0_stride(layout.d0_stride), d1_stride(layout.d1_stride),
+			d0_start_offset(layout.d0_start_offset), d1_start_offset(layout.d1_start_offset), d2_start_offset(layout.d2_start_offset),
+			d0_end_offset(layout.d0_end_offset), d1_end_offset(layout.d1_end_offset), d2_end_offset(layout.d2_end_offset),
+			start(layout.end), end(layout.end){};
 
 	// the same layout with the window narrowed to [start, end)
-	[[nodiscard]] data_layout with_window(int64_t start, int64_t end) const;
+	[[nodiscard]] data_layout with_window(int64_t start, int64_t end) const{
+		return data_layout(this->base, *this);
+	};
 
 	// the number of bytes this layout actually copies, i.e. the length of its window
-	[[nodiscard]] constexpr int64_t window_length() const { return end - start; }
+	[[nodiscard]] constexpr int64_t window_length() const {
+		return end - start;
+	}
 
 	// bytes covered by the box, excluding the gaps
-	[[nodiscard]] constexpr int64_t total_bytes() const { /* TODO: implement */ return 0; }
+	[[nodiscard]] constexpr int64_t total_bytes() const {
+		return (d2_end_offset-d2_start_offset)*(d1_end_offset-d1_start_offset)*(d0_end_offset-d0_start_offset);
+	}
+
 	// offset just past the last byte of the box, relative to the allocation base, for bounds checks against a buffer size
-	[[nodiscard]] constexpr int64_t end_offset() const { /* TODO: implement */ return 0; }
+	[[nodiscard]] constexpr int64_t end_offset() const {
+		return d2_end_offset*d1_stride + d1_end_offset*d0_stride + d0_end_offset;
+	}
 
 	// byte offset in the allocation of the byte `packed_offset` bytes into the box, with the gaps excluded.
 	// This is the closed form the copy kernels need: byte i of a copy sits at offset_at(start + i).
-	[[nodiscard]] constexpr int64_t offset_at(int64_t packed_offset) const { /* TODO: implement */ return 0; }
+	[[nodiscard]] constexpr int64_t offset_at(int64_t packed_offset) const {
+		int64_t d0_size = d0_end_offset - d0_start_offset;
+		int64_t d1_size = d0_size * (d1_end_offset - d1_start_offset);
+		int64_t i_d0 = packed_offset % d0_size;
+		int64_t i_d1 = packed_offset % d1_size;
+		int64_t i_d2 = packed_offset / d1_size;
+		//byte packed_offset sits at box[i_d2][i_d1][i_d0]
+		return (i_d2 + d2_start_offset) * d1_stride * d0_stride + (i_d1 + d1_start_offset) * d0_stride + (i_d0 + d0_start_offset);
+	}
+
+	[[nodiscard]] constexpr bool d1_contigious() const { 
+		return d0_start_offset == 0 && d0_end_offset == d0_stride;
+	} // rows are adjacent, so they can be collapsed
+	[[nodiscard]] constexpr bool d2_contigious() const { 
+		return d1_contigious() && (d1_start_offset == 0 && d1_end_offset == d1_stride);
+	}    // planes are adjacent, so they can be collapsed
 
 	// shape predicates, all defined over the window rather than over the whole box
-	[[nodiscard]] constexpr bool is_contiguous() const { /* TODO: implement */ return false; }        // the window is a single contiguous run
-	[[nodiscard]] constexpr bool contiguous_fragments() const { /* TODO: implement */ return false; } // rows are adjacent, so they can be collapsed
-	[[nodiscard]] constexpr bool contiguous_layers() const { /* TODO: implement */ return false; }    // planes are adjacent, so they can be collapsed
+	[[nodiscard]] constexpr bool is_contiguous() const { 
+		int64_t d0_size = d0_end_offset - d0_start_offset;
+		int64_t d1_size = d0_size * (d1_end_offset - d1_start_offset);
 
-	[[nodiscard]] constexpr bool is_unplaced_staging() const { /* TODO: implement */ return false; }
-	[[nodiscard]] constexpr std::byte* base_ptr() const { /* TODO: implement */ return nullptr; }
+//		bool d1_contigious = d0_start_offset == 0 && d0_end_offset == d0_stride;
+//		bool d2_contigious = d1_contigious && (d1_start_offset == 0 && d1_end_offset == d1_stride);
+		
+		int64_t i_d1_end = end % d1_size;
+		int64_t i_d2_end = end / d1_size;
+		
+		int64_t i_d1_start = start % d1_size;
+		int64_t i_d2_start = start / d1_size;
+		
+		if(i_d2_end != i_d2_start && d2_contigious()){
+			return false;
+		}
+		if(i_d1_end != i_d1_start && d1_contigious()){
+			return false;
+		}
+
+		return true;
+	}        // the window is a single contiguous run
+	
+	[[nodiscard]] constexpr bool is_unplaced_staging() const {
+		return staging.is_staging_id == staging_id::staging_id_flag;
+	}
+	[[nodiscard]] std::byte* base_ptr() const{
+		return reinterpret_cast<std::byte*>(base);
+	}
 
 	// Compares the encoding field by field, window included. Two layouts describing the same bytes with different strides
 	// compare unequal; normalize both first to compare the bytes they describe.
-	bool operator==(const data_layout& other) const;
-	bool operator!=(const data_layout& other) const;
+	constexpr bool operator==(const data_layout& other) const{
+		return other.d0_stride == d0_stride
+		&& other.d1_stride == d1_stride
+		&& other.d0_end_offset == d0_end_offset
+		&& other.d1_end_offset == d1_end_offset
+		&& other.d2_end_offset == d2_end_offset
+		&& other.d0_start_offset == d0_end_offset
+		&& other.d1_start_offset == d1_start_offset
+		&& other.d2_start_offset == d2_start_offset
+		&& other.start == start
+		&& other.end == end
+		&& other.base == base;
+	};
+
+	constexpr bool operator!=(const data_layout& other) const{
+		return !(*this == other);
+	};
 };
 
 // Invokes f(offset_in_allocation, run_length) for each contiguous run of bytes covered by the layout's window.
@@ -120,8 +199,9 @@ enum class copy_properties {
 	none = 0x0000,
 	use_kernel = 0x0001,  // whether to use a kernel to perform the copy
 };
-copy_properties operator|(copy_properties a, copy_properties b);
-bool operator&(copy_properties a, copy_properties b);
+
+inline copy_properties operator|(copy_properties a, copy_properties b) { return static_cast<copy_properties>(static_cast<int>(a) | static_cast<int>(b)); }
+inline bool operator&(copy_properties a, copy_properties b) { return static_cast<int>(a) & static_cast<int>(b); }
 
 // a copy specification describes a single copy operation from a source data layout and device to a destination data layout and device
 struct copy_spec {
@@ -132,14 +212,15 @@ struct copy_spec {
 
 	copy_properties properties = copy_properties::none;
 
-	copy_spec(device_id src_dev, const data_layout& src_layout, device_id tgt_dev, const data_layout& tgt_layout);
-	copy_spec(device_id src_dev, const data_layout& src_layout, device_id tgt_dev, const data_layout& tgt_layout, copy_properties p);
+	constexpr copy_spec(device_id src_dev, const data_layout& src_layout, device_id tgt_dev, const data_layout& tgt_layout)
+	    : source_device(src_dev), source_layout(src_layout), target_device(tgt_dev), target_layout(tgt_layout) {}
+	constexpr copy_spec(device_id src_dev, const data_layout& src_layout, device_id tgt_dev, const data_layout& tgt_layout, copy_properties p)
+	    : source_device(src_dev), source_layout(src_layout), target_device(tgt_dev), target_layout(tgt_layout), properties(p) {}
 
-	[[nodiscard]] bool is_contiguous() const;
-	[[nodiscard]] copy_spec with_properties(copy_properties p) const;
+	[[nodiscard]] constexpr copy_spec with_properties(copy_properties p) const { return {source_device, source_layout, target_device, target_layout, p}; }
 
-	bool operator==(const copy_spec&) const = default;
-	bool operator!=(const copy_spec&) const = default;
+	constexpr bool operator==(const copy_spec&) const = default;
+	constexpr bool operator!=(const copy_spec&) const = default;
 };
 
 // a copy plan is a list of one or more copy specifications which need to be enacted subsequently to implement one semantic copy operation
@@ -170,12 +251,12 @@ struct copy_strategy {
 	int64_t chunk_size = 0; // the size of each chunk to split the copy into, in bytes; 0 means no chunking
 
 	copy_strategy() = default;
-	copy_strategy(copy_type t);
-	copy_strategy(int64_t c);
-	copy_strategy(copy_type t, copy_properties p);
-	copy_strategy(copy_type t, copy_properties p, d2d_implementation d);
-	copy_strategy(copy_type t, copy_properties p, int64_t c);
-	copy_strategy(copy_type t, copy_properties p, d2d_implementation d, int64_t c);
+	copy_strategy(copy_type t) : type(t) {}
+	copy_strategy(int64_t c) : chunk_size(c) {}
+	copy_strategy(copy_type t, copy_properties p) : type(t), properties(p) {}
+	copy_strategy(copy_type t, copy_properties p, d2d_implementation d) : type(t), properties(p), d2d(d) {}
+	copy_strategy(copy_type t, copy_properties p, int64_t c) : type(t), properties(p), chunk_size(c) {}
+	copy_strategy(copy_type t, copy_properties p, d2d_implementation d, int64_t c) : type(t), properties(p), d2d(d), chunk_size(c) {}
 
 	constexpr bool operator==(const copy_strategy&) const = default;
 	constexpr bool operator!=(const copy_strategy&) const = default;
@@ -193,12 +274,6 @@ bool is_valid(const copy_plan& plan);
 // validate whether a given copy set is sound
 bool is_valid(const parallel_copy_set& set);
 
-// check whether a given copy plan implements a given copy specification
-bool is_equivalent(const copy_plan& plan, const copy_spec& spec);
-
-// check whether the given copy set implements the given copy specification
-bool is_equivalent(const parallel_copy_set& set, const copy_spec& spec);
-
 // Collapse densely packed dimensions into the unique normal form of the box (see "Normal form" in docs/design.md):
 // a single contiguous run becomes a 1D layout, evenly spaced runs a 2D one, and anything else stays 3D.
 // Two layouts describe the same box bytes and window exactly when their normal forms compare equal.
@@ -207,9 +282,6 @@ data_layout normalize(const data_layout& layout);
 // Normalize each layout of a copy spec independently. Each side is read in its own packed order, so this preserves
 // exactly what the spec copies.
 copy_spec normalize(const copy_spec& spec);
-
-// apply given properties to the given copy spec
-copy_spec apply_properties(const copy_spec& spec, const copy_properties& props);
 
 // apply chunking to the given copy spec if requested by the strategy
 parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& strategy);

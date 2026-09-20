@@ -145,8 +145,8 @@ TEST_CASE("a strided box is not contiguous", "[layout][!mayfail]") {
 	const auto layout = ref::fields();
 
 	CHECK_FALSE(layout.is_contiguous());
-	CHECK_FALSE(layout.contiguous_fragments());
-	CHECK_FALSE(layout.contiguous_layers());
+	CHECK_FALSE(layout.d1_contigious());
+	CHECK_FALSE(layout.d2_contigious());
 
 	// paired with a positive, so that the case cannot pass while the predicates are placeholders returning false
 	CHECK(whole_allocation().is_contiguous());
@@ -156,8 +156,8 @@ TEST_CASE("a box spanning the whole allocation is contiguous", "[layout][!mayfai
 	const auto layout = whole_allocation();
 
 	CHECK(layout.total_bytes() == 12 * ref::d1_stride);
-	CHECK(layout.contiguous_fragments());
-	CHECK(layout.contiguous_layers());
+	CHECK(layout.d1_contigious());
+	CHECK(layout.d2_contigious());
 	CHECK(layout.is_contiguous());
 }
 
@@ -172,7 +172,7 @@ TEST_CASE("full rows of one plane have collapsible fragments", "[layout][!mayfai
 	const auto layout = full_rows_of_one_plane();
 
 	CHECK(layout.total_bytes() == ref::rows * ref::d0_stride);
-	CHECK(layout.contiguous_fragments());
+	CHECK(layout.d1_contigious());
 	CHECK(layout.is_contiguous());
 }
 
