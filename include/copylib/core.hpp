@@ -183,7 +183,23 @@ struct data_layout {
 // that purpose, because a window may start or end in the middle of a row, making its first and last runs partial.
 template <typename F>
 void for_each_contiguous_run(const data_layout& layout, F&& f) {
-	(void)layout, (void)f; // TODO: implement
+	if(layout.start >= layout.end) { return; }
+	const int64_t row_extent = layout.d0_end_offset - layout.d0_start_offset;
+	int64_t run_offset = 0;
+	int64_t run_length = 0;
+	for(int64_t packed = layout.start; packed < layout.end;) {
+		const int64_t offset = layout.offset_at(packed);
+		// the rest of the row that `packed` falls into, clipped to the window
+		const int64_t take = std::min(row_extent - packed % row_extent, layout.end - packed);
+		if(run_length != 0 && offset != run_offset + run_length) {
+			f(run_offset, run_length);
+			run_length = 0;
+		}
+		if(run_length == 0) { run_offset = offset; }
+		run_length += take;
+		packed += take;
+	}
+	f(run_offset, run_length);
 }
 
 enum class copy_properties {
