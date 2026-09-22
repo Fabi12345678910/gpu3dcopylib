@@ -116,7 +116,33 @@ copy_spec normalize(const copy_spec& spec) {
     return {spec.source_device, normalize(spec.source_layout), spec.target_device, normalize(spec.target_layout), spec.properties};
 }
 
-parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& strategy) { return {}; }
+parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& strategy) {
+    if (strategy.chunk_size == 0) {return {{spec}};};
+    parallel_copy_set copy_set;
+
+    int64_t alignment = copy_alignment(spec);
+
+    int64_t used_chunk_size = std::max(alignment, (strategy.chunk_size / alignment) * alignment);
+    
+    int64_t source_start = spec.source_layout.start;
+    int64_t target_start = spec.target_layout.start;
+
+    while (source_start < spec.source_layout.end){
+        int64_t source_end = std::min((source_start / used_chunk_size + 1) * used_chunk_size, spec.source_layout.end);
+        int64_t target_end = target_start + (source_end - source_start);
+
+
+        copy_set.push_back({{
+            spec.source_device, spec.source_layout.with_window(source_start, source_end),
+            spec.target_device, spec.target_layout.with_window(target_start, target_end),
+        spec.properties}});
+
+        source_start = source_end;
+        target_start = target_end;
+    }
+
+    return copy_set;
+}
 
 staging_id basic_staging_provider::operator()(device_id did, bool on_host, int64_t size) { return {}; }
 

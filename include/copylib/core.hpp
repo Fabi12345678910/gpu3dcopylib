@@ -296,9 +296,12 @@ inline int64_t copy_alignment(const copy_spec& spec){
 	int64_t alignment = 64;
 	int64_t source_width = spec.source_layout.d0_end_offset - spec.source_layout.d0_start_offset;
 	int64_t target_width = spec.target_layout.d0_end_offset - spec.target_layout.d0_start_offset;
+	int64_t shift = spec.source_layout.start - spec.target_layout.start;
 	for(; alignment > 1; alignment >>= 1){
 		if(source_width % alignment == 0 && target_width % alignment == 0
-			&& spec.source_layout.d0_stride % alignment == 0 && spec.target_layout.d0_stride % alignment == 0){
+			&& spec.source_layout.d0_stride % alignment == 0 && spec.target_layout.d0_stride % alignment == 0
+			&& spec.source_layout.d0_start_offset % alignment == 0 && spec.target_layout.d0_start_offset % alignment == 0
+			&& shift % alignment == 0){
 			break;
 		}
 	}
