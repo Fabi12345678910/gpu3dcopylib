@@ -58,7 +58,7 @@ std::vector<data_layout> single_field_changes() {
 // ---------------------------------------------------------------------------------------------------------------------
 // Hashing
 
-TEST_CASE("layouts hash by all of their fields, window included", "[support][hash][!mayfail]") {
+TEST_CASE("layouts hash by all of their fields, window included", "[support][hash]") {
 	CHECK(hash_of(ref::fields()) == hash_of(ref::fields()));
 
 	const char* field_names[] = {"base", "d0_stride", "d1_stride", "d0_start_offset", "d1_start_offset", "d2_start_offset", "d0_end_offset",
@@ -70,13 +70,13 @@ TEST_CASE("layouts hash by all of their fields, window included", "[support][has
 	}
 }
 
-TEST_CASE("chunks of one spec hash differently", "[support][hash][window][!mayfail]") {
+TEST_CASE("chunks of one spec hash differently", "[support][hash][window]") {
 	const auto layout = ref::fields();
 	CHECK(hash_of(with_window_fields(layout, 0, 96)) != hash_of(with_window_fields(layout, 96, 192)));
 	CHECK(hash_of(with_window_fields(layout, 0, 96)) == hash_of(with_window_fields(layout, 0, 96)));
 }
 
-TEST_CASE("normalized encodings of the same bytes hash equal", "[support][hash][normalization][!mayfail]") {
+TEST_CASE("normalized encodings of the same bytes hash equal", "[support][hash][normalization]") {
 	// canonical encoding is what makes this hold: after normalize, the same bytes have the same fields
 	const auto in_allocation = normalize(shapes::single_row());
 	const auto built_1d = normalize(normal_form::one_run(ref::base, 16, 24));
@@ -86,7 +86,7 @@ TEST_CASE("normalized encodings of the same bytes hash equal", "[support][hash][
 	CHECK(hash_of(in_allocation) != hash_of(normalize(shapes::whole_allocation())));
 }
 
-TEST_CASE("copy specs hash by devices, layouts and properties", "[support][hash][!mayfail]") {
+TEST_CASE("copy specs hash by devices, layouts and properties", "[support][hash]") {
 	const auto spec = ref::spec();
 	CHECK(hash_of(spec) == hash_of(ref::spec()));
 
@@ -105,7 +105,7 @@ TEST_CASE("copy specs hash by devices, layouts and properties", "[support][hash]
 	CHECK(hash_of(other_properties) != hash_of(spec));
 }
 
-TEST_CASE("copy plans hash by their steps in order", "[support][hash][!mayfail]") {
+TEST_CASE("copy plans hash by their steps in order", "[support][hash]") {
 	const auto a = ref::spec();
 	const auto b = ref::spec().with_properties(copy_properties::use_kernel);
 
@@ -115,7 +115,7 @@ TEST_CASE("copy plans hash by their steps in order", "[support][hash][!mayfail]"
 	CHECK(hash_of(copy_plan{a, b}) != hash_of(copy_plan{b, a}));
 }
 
-TEST_CASE("strategies hash by all of their fields", "[support][hash][!mayfail]") {
+TEST_CASE("strategies hash by all of their fields", "[support][hash]") {
 	const auto base = strategy_from_fields(copy_type::staged, copy_properties::none, d2d_implementation::direct, 64);
 	CHECK(hash_of(base) == hash_of(strategy_from_fields(copy_type::staged, copy_properties::none, d2d_implementation::direct, 64)));
 
@@ -125,7 +125,7 @@ TEST_CASE("strategies hash by all of their fields", "[support][hash][!mayfail]")
 	CHECK(hash_of(strategy_from_fields(copy_type::staged, copy_properties::none, d2d_implementation::direct, 128)) != hash_of(base));
 }
 
-TEST_CASE("enum values hash distinctly", "[support][hash][!mayfail]") {
+TEST_CASE("enum values hash distinctly", "[support][hash]") {
 	CHECK(hash_of(copy_properties::none) == hash_of(copy_properties::none));
 	CHECK(hash_of(copy_properties::none) != hash_of(copy_properties::use_kernel));
 	CHECK(hash_of(copy_type::direct) != hash_of(copy_type::staged));
@@ -135,7 +135,7 @@ TEST_CASE("enum values hash distinctly", "[support][hash][!mayfail]") {
 // ---------------------------------------------------------------------------------------------------------------------
 // Formatting
 
-TEST_CASE("enum-like types keep their 2D format", "[support][format][!mayfail]") {
+TEST_CASE("enum-like types keep their 2D format", "[support][format]") {
 	CHECK(utils::format("{}", device_id::host) == "host");
 	CHECK(utils::format("{}", device_id::d0) == "d0");
 	CHECK(utils::format("{}", device_id::d5) == "d5");
@@ -157,7 +157,7 @@ TEST_CASE("enum-like types keep their 2D format", "[support][format][!mayfail]")
 	      == "strategy(direct, use_kernel, d2d:direct, chunk:256)");
 }
 
-TEST_CASE("a layout prints its address and tells layouts apart", "[support][format][!mayfail]") {
+TEST_CASE("a layout prints its address and tells layouts apart", "[support][format]") {
 	const auto layout = ref::fields();
 	const auto printed = utils::format("{}", layout);
 
@@ -170,7 +170,7 @@ TEST_CASE("a layout prints its address and tells layouts apart", "[support][form
 	}
 }
 
-TEST_CASE("an unplaced staging layout prints its staging id instead of an address", "[support][format][staging][!mayfail]") {
+TEST_CASE("an unplaced staging layout prints its staging id instead of an address", "[support][format][staging]") {
 	const auto id = staging_id_from_fields(true, device_id::d1, 7);
 	const auto printed = utils::format("{}", staging_layout_from_fields(id, 288));
 
@@ -178,7 +178,7 @@ TEST_CASE("an unplaced staging layout prints its staging id instead of an addres
 	CHECK_THAT(printed, ContainsSubstring(utils::format("{}", id)));
 }
 
-TEST_CASE("composite types print their parts in order", "[support][format][!mayfail]") {
+TEST_CASE("composite types print their parts in order", "[support][format]") {
 	const auto a = ref::spec();
 	const auto b = spec_from_fields(device_id::d1, ref::fields(0x80000), device_id::host, ref::fields(0x90000)).with_properties(copy_properties::use_kernel);
 
@@ -200,7 +200,7 @@ TEST_CASE("composite types print their parts in order", "[support][format][!mayf
 	CHECK_THAT(set_text, ContainsSubstring(utils::format("{}", copy_plan{a, b})));
 }
 
-TEST_CASE("ostream and Catch2 print exactly what the formatter prints", "[support][format][!mayfail]") {
+TEST_CASE("ostream and Catch2 print exactly what the formatter prints", "[support][format]") {
 	// Catch2 prints failed comparisons through these, so they are what a failing test shows
 	const auto spec = ref::spec();
 	const auto formatted = utils::format("{}", spec);
