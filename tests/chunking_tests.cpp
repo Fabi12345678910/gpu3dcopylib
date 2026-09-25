@@ -246,3 +246,12 @@ TEST_CASE("the alignment accounts for every term on both sides", "[chunking][ali
 		CHECK(copy_alignment(on_both(layout_from_fields(0x10000, 9, 4, 0, 0, 0, 9, 4, 1, 0, 36))) == 1);
 	}
 }
+
+TEST_CASE("chunking rejects an invalid spec", "[chunking][error][!mayfail]") {
+	auto invalid = ref::spec();
+	invalid.target_layout.end -= 8; // window lengths differ
+	REQUIRE_FALSE(is_valid(invalid));
+
+	CHECK_THROWS_AS(apply_chunking(invalid, chunking_strategy(64)), copylib::error);
+	CHECK_NOTHROW(apply_chunking(ref::spec(), chunking_strategy(64)));
+}

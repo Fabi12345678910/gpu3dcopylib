@@ -8,9 +8,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include <cassert> // IWYU pragma: keep (used in macro)
 #include <cstdint>
-#include <cstdlib> // IWYU pragma: keep (used in macro)
+#include <stdexcept>
 
 #ifdef COPYLIB_USE_FMT
 #include <fmt/core.h>
@@ -124,13 +123,21 @@ int64_t parse_command_line_option(int argc, char** argv, const std::string& opti
 
 } // namespace copylib::utils
 
+namespace copylib {
+
+// thrown for every failure: invalid input, broken internal invariants and resources that run out
+class error : public std::runtime_error {
+  public:
+	using std::runtime_error::runtime_error;
+};
+
+} // namespace copylib
+
 #define COPYLIB_ENSURE(_expr, ...)                                                                                                                             \
 	do {                                                                                                                                                       \
 		if(!(_expr)) {                                                                                                                                         \
-			copylib::utils::err_print("Error: !{}\nIn {}:{} : {}\n => {}\n", #_expr, __FILE__, __LINE__, __FUNCTION__, copylib::utils::format(__VA_ARGS__));    \
-			assert(false);                                                                                                                                     \
-			std::exit(1);                                                                                                                                      \
-			__builtin_unreachable();                                                                                                                           \
+			throw copylib::error(                                                                                                                              \
+			    copylib::utils::format("Error: !{}\nIn {}:{} : {}\n => {}", #_expr, __FILE__, __LINE__, __FUNCTION__, copylib::utils::format(__VA_ARGS__)));   \
 		}                                                                                                                                                      \
 	} while(false);
 

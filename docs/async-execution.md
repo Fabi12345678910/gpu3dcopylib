@@ -242,12 +242,13 @@ particular, [consequence 3](#3-take-device-and-lane-as-parameters) makes caller-
 | Waiting | The handle has a blocking `wait()` next to the non-blocking `is_complete()`. Tests and benchmarks wait; a Celerity adapter would only poll. |
 | Thread pool | `BS::thread_pool`, as in the 2D library, but owned by the executor rather than a function-local `static`. It still has to be added as a dependency. |
 | Queues | The executor creates and owns its in-order queues, as in the 2D library. |
-| Staging lifetime | Open, see [Open questions](#open-questions). |
-| Error handling | Deferred, see decision 3 in [design.md](design.md#open-decisions). |
+| Staging lifetime | Open. Until it is settled, staged calls are not blocked: overlapping ones are undefined behaviour, and the executor warns when a staged call starts while another is in flight. |
+| Error handling | Every failure throws `copylib::error`: invalid input, broken internal invariants and resource failures alike, so `COPYLIB_ENSURE` throws instead of calling `std::exit`. A failure inside a worker cannot reach the caller as an exception and is reported as a message through `copy_handle::error()` instead. |
 
-Compared with the analysis above, this leaves out two things for now, both motivated by Celerity: polling events
-(option B) for the parts that need no runtime decisions, and taking the caller's queues. Keeping queue selection behind
-one function in the executor leaves room for caller-provided lanes later.
+Compared with the analysis above, this leaves out three things for now, all motivated by Celerity: polling events
+(option B) for the parts that need no runtime decisions, taking the caller's queues, and the injectable failure handler
+of [consequence 4](#4-fail-through-an-injectable-handler-not-exceptions); a Celerity adapter turns exceptions into
+panics instead. Keeping queue selection behind one function in the executor leaves room for caller-provided lanes later.
 
 ## Proposed interface
 
@@ -276,6 +277,9 @@ class copy_handle {
 	[[nodiscard]] std::optional<std::chrono::nanoseconds> execution_time() const;
 
   private:
+	explicit copy_handle(std::shared_ptr<detail::copy_state> state);
+	friend copy_handle execute_copy(executor& exec, const parallel_copy_set& set);
+
 	std::shared_ptr<detail::copy_state> state;
 };
 
@@ -298,6 +302,7 @@ if(const auto error = handle.error()) { copylib::utils::err_print("copy failed: 
 ```
 
 The per-spec and per-plan `execute_copy` overloads become synchronous building blocks in `detail`, run by the workers.
+Only `execute_copy` creates handles, so there is no public constructor and no empty handle.
 
 ### Handle details
 
@@ -308,8 +313,7 @@ The per-spec and per-plan `execute_copy` overloads become synchronous building b
   for a large chunked set, and `future::get()` rethrows, which the handle must not.
 - **Failures complete, too.** A worker catches whatever its plan throws (a `sycl::exception` from waiting on a step, or
   any `std::exception`), records the first message and ends that plan; the other plans run to completion, so `wait()`
-  always returns. `COPYLIB_ENSURE` still calls `std::exit` and must not fire on a worker; that is part of the deferred
-  error handling.
+  always returns. Since `COPYLIB_ENSURE` throws, a failed check inside a worker is reported the same way.
 - **Workers wait on their own step's event**, not on the whole queue as the 2D library's `wait_and_throw()` did.
   Several calls can share the executor's queues, and waiting on a queue would also wait for the other calls' work.
 - **Dropping a handle** neither blocks nor cancels the copy, because the workers keep the state alive. Source and target
@@ -328,7 +332,7 @@ The per-spec and per-plan `execute_copy` overloads become synchronous building b
   blocked until their copies finished. With option C, two calls in flight receive the same staging memory. The options
   are an allocator owned by the executor that releases a call's buffers when its last plan finishes, serialising staged
   calls so that a second one waits for the first, or staging memory from the caller (next point). Whichever it is,
-  reclamation hangs off the same completion point as the handle. Until this is decided, staged calls must not overlap.
+  reclamation hangs off the same completion point as the handle. Until then, overlapping staged calls are undefined behaviour and the executor only warns about them.
 - **Staging ownership.** Staging buffers could come from the caller's allocator, which Celerity tracks, instead of from
   buffers owned by the executor.
 - **Multi-lane execution under Celerity**, part of the integration: which [route](#working-within-the-lane-constraint)
@@ -339,7 +343,7 @@ The per-spec and per-plan `execute_copy` overloads become synchronous building b
 
 ## Testing note
 
-SimSYCL is only the SYCL implementation of the devcontainer and CI; it is not a design target. It executes synchronously: `event::wait()` and `handler::depends_on` do nothing, and every event reports `complete`. CI therefore checks that the data is copied correctly, but not the ordering: a set with missing dependencies or early staging reuse still produces correct bytes. Record the submissions and dependencies the executor produces and assert on them, separately from the byte-comparison property tests.
+SimSYCL is only the SYCL implementation of the devcontainer and CI; it is not a design target. It executes synchronously: `event::wait()` and `handler::depends_on` do nothing, and every event reports `complete`. CI therefore checks that the data is copied correctly, but not the ordering: a set with missing dependencies or early staging reuse still produces correct bytes. There is no test-only hook to record submissions and no dedicated ordering test: correct bytes from the same tests run on an asynchronous SYCL implementation are taken as sufficient, see layer 10 in [testing.md](testing.md).
 
 [cel-commit]: https://github.com/celerity/celerity-runtime/tree/10390458eb2d46a74525df7ac2420a1d80acdf2a
 [cel-async-event]: https://github.com/celerity/celerity-runtime/blob/10390458eb2d46a74525df7ac2420a1d80acdf2a/include/async_event.h#L49-L72

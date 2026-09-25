@@ -6,8 +6,10 @@
 #include <simsycl/system.hh>
 #endif
 
+#include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 
 // Skeleton: every function below returns a default-constructed value so that calling it is well-defined while the
 // implementation is missing. Functions returning a reference cannot do that and fail loudly instead.
@@ -97,6 +99,22 @@ namespace {
 
 void execute_copy(executor& exec, const copy_plan& plan) {}
 
-void execute_copy(executor& exec, const parallel_copy_set& set) {}
+namespace detail {
+
+	struct copy_state {};
+
+} // namespace detail
+
+copy_handle::copy_handle(std::shared_ptr<detail::copy_state> state) : state(std::move(state)) {}
+
+bool copy_handle::is_complete() const { return {}; }
+
+void copy_handle::wait() const {}
+
+std::optional<std::string> copy_handle::error() const { return {}; }
+
+std::optional<std::chrono::nanoseconds> copy_handle::execution_time() const { return {}; }
+
+copy_handle execute_copy(executor& exec, const parallel_copy_set& set) { return copy_handle(std::make_shared<detail::copy_state>()); }
 
 } // namespace copylib

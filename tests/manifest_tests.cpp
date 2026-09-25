@@ -233,3 +233,14 @@ TEST_CASE("randomized specs and strategies", "[manifest][random]") {
 	}
 	report.report();
 }
+
+TEST_CASE("manifest_strategy rejects an invalid spec", "[manifest][error][!mayfail]") {
+	auto invalid = ref::spec();
+	invalid.target_layout.end -= 8; // window lengths differ
+	REQUIRE_FALSE(is_valid(invalid));
+	const auto strategy = strategy_from_fields(copy_type::staged, copy_properties::none, d2d_implementation::host_staging_at_both, 64);
+	std::vector<staging_request> log;
+
+	CHECK_THROWS_AS(manifest_strategy(invalid, strategy, recording_provider(log)), copylib::error);
+	CHECK_NOTHROW(manifest_strategy(ref::spec(), strategy, recording_provider(log)));
+}

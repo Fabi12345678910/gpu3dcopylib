@@ -115,14 +115,15 @@ Why stage at all: the gather/scatter kernels are cheap because they run in paral
 - Overlap checks for copies within one allocation can only be conservative.
 - Direct d2d copies with host staging pack the staging layout. Staging buffers are always 1D, so their size is the window length.
 - Strided copies involving the host become `memcpy` loops without native 2D copies. Benchmark against the 2D library before accepting this.
+- Host memory given by the caller may be pinned (`sycl::malloc_host`) or pageable. Kernels cannot read pageable memory, so a copy involving pageable host memory must not take the kernel path.
 
 ## Open decisions
 
 These decide the public API and should be settled before implementing the backend:
 
-1. **Ownership.** Decided for now: the executor creates and owns its queues, see [async-execution.md](async-execution.md#decisions). Taking the caller's devices and queues is left to the Celerity integration. The SimSYCL system configuration moves into the test harness. Whether the CPU affinity changes and the data buffers also leave the library is still open.
+1. **Ownership.** Decided for now: the executor creates and owns its queues, see [async-execution.md](async-execution.md#decisions). Taking the caller's devices and queues is left to the Celerity integration. The SimSYCL system configuration and the data buffers (`dev_buffer`, `host_buffer` and their getters) move into the tests; the executor keeps only its staging buffers. Whether the CPU affinity changes leave the library too is still open, since the host staging buffers use them as well.
 2. **Blocking vs. async execution.** Decided: `execute_copy` hands the plans to worker threads on an executor-owned `BS::thread_pool` and returns a handle with `is_complete()` and `wait()`, see [async-execution.md](async-execution.md#decisions).
-3. **Error handling.** `COPYLIB_ENSURE` calls `std::exit(1)`. Proposal: invalid input from the caller throws; internal invariants are checked in debug builds only.
+3. **Error handling.** Decided: every failure throws `copylib::error`, including broken internal invariants, so `COPYLIB_ENSURE` throws instead of calling `std::exit(1)`. Failures inside a worker are reported as a message through `copy_handle::error()`, see [async-execution.md](async-execution.md#decisions).
 
 These can be settled during implementation:
 
@@ -133,7 +134,7 @@ These can be settled during implementation:
 
 ## Upcoming steps
 
-1. ~~Settle open decisions 1-3.~~ 1 and 2 are settled, see [async-execution.md](async-execution.md#decisions); 3, error handling, is deferred.
+1. ~~Settle open decisions 1-3.~~ Done, see [async-execution.md](async-execution.md#decisions).
 2. ~~Update the skeleton.~~ Done: the window is in `data_layout` and its constructors, the 1D constructors take a
    length instead of a `fragment_length`, the native 2D/3D copy API and `COPYLIB_USE_CUDA` are gone, and the README
    table and example are updated. The accessors were reworked by dropping rather than defining them:

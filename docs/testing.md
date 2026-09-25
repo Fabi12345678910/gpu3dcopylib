@@ -68,10 +68,10 @@ failing assertion.
 | 6 | d2d implementation | `tests/d2d_tests.cpp` | written |
 | 7 | `manifest_strategy` | `tests/manifest_tests.cpp` | written |
 | 8 | Support: hashing and formatting | `tests/support_tests.cpp` | written |
-| 9 | Backend data correctness | | to do |
-| 10 | Ordering and concurrency | | to do |
-| 11 | Async handle semantics | | to do |
-| 12 | Executor and build | | partially covered by the CMake setup |
+| 9 | Backend data correctness | `tests/backend_tests.cpp` | written |
+| 10 | Ordering and concurrency | `tests/execution_tests.cpp` | written |
+| 11 | Async handle semantics | `tests/execution_tests.cpp` | written |
+| 12 | Executor and build | `tests/executor_tests.cpp` | written; the build itself is covered by CI |
 
 ### 1. Layout math
 
@@ -89,6 +89,9 @@ window bounds, equal window lengths across a spec including boxes of different s
 chunk has, and the reshaping case. Counting rows and planes removed the three divisibility rules a byte-based encoding
 needed. Empty plans and sets are valid. The 2-byte base alignment is assumed rather than checked. Plus: `is_valid`
 must be total, i.e. never crash on arbitrary field values — worth adding as a randomized case.
+
+`is_valid` itself never throws. The functions that take a spec, plan or set throw on invalid input instead, and each
+layer gets one such case once they do.
 
 ### 3. Normalization
 
@@ -166,41 +169,43 @@ kernel as in the 2D suite: in 3D that mapping is the thing under test, and dupli
 the bug.
 
 The test harness configures SimSYCL's devices before the first device query, as the 2D executor did for itself
-(several identical GPUs). The library leaves the system configuration to its caller.
+(several identical GPUs), and allocates the memory it copies from and to with `sycl::malloc_device` and `sycl::malloc_host`
+on the executor's queues. The library leaves both to its caller.
 
 Fill the target with a sentinel, copy, compare the whole buffer against the reference — that checks the copied bytes and
 that untouched bytes stayed untouched, which is the likely failure mode of chunk alignment rounding. Assert the source
 is unchanged. Forced cases: whole allocation, single row, window inside one row, windows crossing row and plane
 boundaries, reshaping, one byte, odd row extents (alignment 1) and extents with alignment 64. The same spec with and
-without `use_kernel` must produce identical bytes. Then the randomized version of all of it, with a fixed seed and an
-override for reproduction.
+without `use_kernel` must produce identical bytes. Host ends are tested with both pinned (`sycl::malloc_host`) and pageable
+memory. Then the randomized version of all of it, with a fixed seed and an override for reproduction.
 
 ### 10. Ordering and concurrency
 
-SimSYCL executes everything at submit time, so a plan whose steps are not ordered still produces correct bytes and
-layer 9 gives no coverage here. See [async-execution.md](async-execution.md#testing-note).
-
-With worker threads, ordering within a plan comes from the worker waiting on each step. The mechanism is a recording
-seam: an executor that logs `(worker, queue, step, submit or wait)` instead of submitting. Assertions on the log: when
-a plan's next step goes to a different queue, it is submitted only after the worker waited on the previous step;
-workers wait on their own step's event, never on a whole queue; the handle completes only after every recorded step of
-its call; and, once the [staging lifetime](async-execution.md#open-questions) is decided, two calls in flight never
-share staging memory. This is pure data, so it runs in CI.
+SimSYCL executes each step when it is submitted, so a worker that fails to wait between steps still produces correct
+bytes, and CI cannot see ordering. There is deliberately no test-only hook for recording submissions and no dedicated
+ordering test: the layer 9 tests producing correct bytes on an asynchronous SYCL implementation such as DPC++ or
+AdaptiveCpp is taken as sufficient. What CI does check is that several calls in flight at once each produce correct
+bytes; overlapping staged calls are undefined behaviour until the
+[staging lifetime](async-execution.md#open-questions) is decided, and are not tested.
 
 ### 11. Async handle semantics
 
-`is_complete()` is monotonic and never blocks. `wait()` returns once the copy is complete, also after a failure. Work
-proceeds without anyone polling or waiting. A forced failure is reported through `error()`, no exception escapes a
-worker, and the other plans of the set still complete. Dropping a handle neither blocks nor cancels the copy. Several
-calls can be in flight at once. `execution_time()` is empty until the handle completes.
+Tested with real copies, without a hook into the workers. `wait()` returns, after which `is_complete()` is true and
+`execution_time()` is set. Sampled repeatedly, `is_complete()` never goes back from true to false, and it returns
+immediately while a large copy is still running. Several calls can be in flight, and dropping a handle and then
+destroying the executor still completes the copy.
+
+Failures are tested with natural ones, such as a set whose staging does not fit the executor's buffers: a failure on
+the caller's thread throws from `execute_copy`, one inside a worker is reported through `error()` while the other plans
+still complete. What cannot be asserted is that a copy is *not yet* complete, since SimSYCL may already have finished it.
 
 ## What CI can and cannot prove
 
 | Runs in CI on SimSYCL | Needs real hardware |
 | --- | --- |
-| Layers 1-8 in full | Actual concurrency and ordering |
+| Layers 1-8 in full | Ordering, through layer 9 on an asynchronous implementation |
 | Layer 9 data correctness | Peer access and true multi-device |
-| Layer 10 recorded structure | The kernel's int32 index path (needs > 2 GiB, opt-in) |
+| Layer 10 correct bytes with calls in flight | The kernel's int32 index path (needs > 2 GiB, untested for now) |
 | Layer 11 handle semantics | Any performance claim |
 
 SimSYCL is only the SYCL implementation used by the dev container and CI. It is not a design target.

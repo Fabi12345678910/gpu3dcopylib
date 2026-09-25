@@ -281,3 +281,13 @@ TEST_CASE("the basic staging provider hands out a distinct id per request", "[st
 		CHECK(provider(device_id::d0, false, 64) != provider(device_id::d0, false, 64));
 	}
 }
+
+TEST_CASE("staging rejects an invalid spec", "[staging][error][!mayfail]") {
+	auto invalid = ref::spec();
+	invalid.target_layout.end -= 8; // window lengths differ
+	REQUIRE_FALSE(is_valid(invalid));
+	std::vector<staging_request> log;
+
+	CHECK_THROWS_AS(apply_staging(invalid, staged(), recording_provider(log)), copylib::error);
+	CHECK_NOTHROW(apply_staging(ref::spec(), staged(), recording_provider(log)));
+}

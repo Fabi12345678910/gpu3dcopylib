@@ -4,6 +4,9 @@
 
 #include <sycl/sycl.hpp>
 
+#include <chrono>
+#include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -101,13 +104,33 @@ namespace detail {
 		std::unordered_map<decltype(staging_id::index), staging_info> staging_buffers;
 	};
 
+	struct copy_state; // shared by a handle and the workers running its plans
+
 } // namespace detail
+
+// Completion state of one execute_copy call. Copies of a handle share the same state.
+class copy_handle {
+  public:
+	[[nodiscard]] bool is_complete() const;
+	void wait() const;
+
+	// the first failure of any plan once complete, empty on success
+	[[nodiscard]] std::optional<std::string> error() const;
+	[[nodiscard]] std::optional<std::chrono::nanoseconds> execution_time() const;
+
+  private:
+	explicit copy_handle(std::shared_ptr<detail::copy_state> state);
+	friend copy_handle execute_copy(executor& exec, const parallel_copy_set& set);
+
+	std::shared_ptr<detail::copy_state> state;
+};
 
 executor::target execute_copy(
     executor& exec, const copy_spec& spec, int64_t queue_idx = 0, bool alternate_device = false, const executor::target last_target = executor::null_target);
 
 void execute_copy(executor& exec, const copy_plan& plan);
 
-void execute_copy(executor& exec, const parallel_copy_set& set);
+// hands the plans of the set to the executor's thread pool and returns immediately
+[[nodiscard]] copy_handle execute_copy(executor& exec, const parallel_copy_set& set);
 
 } // namespace copylib

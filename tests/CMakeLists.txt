@@ -20,6 +20,9 @@ set(TEST_FILES
   d2d_tests.cpp
   manifest_tests.cpp
   support_tests.cpp
+  backend_tests.cpp
+  execution_tests.cpp
+  executor_tests.cpp
 )
 
 # Build one object library per test file so that each file can also be run as its own executable without

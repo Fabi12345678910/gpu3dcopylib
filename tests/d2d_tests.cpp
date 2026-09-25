@@ -186,3 +186,13 @@ TEST_CASE("the set overload reroutes every plan with its own buffers", "[d2d]") 
 	CHECK(log.size() == 6);
 	CHECK(staging_is_consistent(result));
 }
+
+TEST_CASE("the d2d implementation rejects an invalid plan", "[d2d][error][!mayfail]") {
+	auto invalid = ref::spec();
+	invalid.target_layout.end -= 8; // window lengths differ
+	REQUIRE_FALSE(is_valid(invalid));
+	std::vector<staging_request> log;
+
+	CHECK_THROWS_AS(apply_d2d_implementation(copy_plan{invalid}, d2d_implementation::host_staging_at_source, recording_provider(log)), copylib::error);
+	CHECK_NOTHROW(apply_d2d_implementation(copy_plan{ref::spec()}, d2d_implementation::host_staging_at_source, recording_provider(log)));
+}
