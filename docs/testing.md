@@ -60,14 +60,14 @@ failing assertion.
 | --- | --- | --- | --- |
 | 0 | Generic utilities | `tests/utils_tests.cpp` | passing (`src/utils.cpp` is ported from the 2D library) |
 | — | The oracle itself | `tests/reference_tests.cpp` | passing |
-| 1 | Layout math | `tests/layout_tests.cpp` | written |
-| 2 | Validation | `tests/validation_tests.cpp` | written |
-| 3 | Normalization | `tests/normalization_tests.cpp` | written |
-| 4 | Chunking | `tests/chunking_tests.cpp` | written |
-| 5 | Staging | | to do |
-| 6 | d2d implementation | | to do |
-| 7 | `manifest_strategy` | | to do |
-| 8 | Support: hashing and formatting | | to do |
+| 1 | Layout math | `tests/layout_tests.cpp` | passing |
+| 2 | Validation | `tests/validation_tests.cpp` | passing |
+| 3 | Normalization | `tests/normalization_tests.cpp` | passing |
+| 4 | Chunking | `tests/chunking_tests.cpp` | passing |
+| 5 | Staging | `tests/staging_tests.cpp` | written |
+| 6 | d2d implementation | `tests/d2d_tests.cpp` | written |
+| 7 | `manifest_strategy` | `tests/manifest_tests.cpp` | written |
+| 8 | Support: hashing and formatting | `tests/support_tests.cpp` | written |
 | 9 | Backend data correctness | | to do |
 | 10 | Ordering and dependency structure | | to do |
 | 11 | Async handle semantics | | to do |
@@ -85,10 +85,10 @@ field-wise `operator==`, `base_ptr`, and `staging_id` round-tripping.
 
 One accept and one reject per rule in [design.md](design.md#data-layout): non-zero strides, the box fitting inside one
 row and one plane (which is also what makes the encoding canonical), non-empty dimensions, the unbounded plane count,
-2-byte base alignment, window bounds, equal window lengths across a spec including boxes of different sizes as a staged
+window bounds, equal window lengths across a spec including boxes of different sizes as a staged
 chunk has, and the reshaping case. Counting rows and planes removed the three divisibility rules a byte-based encoding
-needed. Plus: `is_valid` must be total, i.e. never crash on arbitrary field
-values — worth adding as a randomized case.
+needed. Empty plans and sets are valid. The 2-byte base alignment is assumed rather than checked. Plus: `is_valid`
+must be total, i.e. never crash on arbitrary field values — worth adding as a randomized case.
 
 ### 3. Normalization
 
@@ -116,30 +116,48 @@ The edge cases from [design.md](design.md#chunking-edge-cases): a `chunk_size` b
 an unaligned window keeps its interior boundaries at absolute aligned offsets, so `[3, 288)` with `chunk_size` 64
 becomes `61, 64, 64, 64, 32`.
 
+`copy_alignment` gets one case per term — both row extents, both `d0_stride`s, both `d0_start_offset`s and the shift
+between the windows — each of which goes wrong without its term, plus an equal shift of both windows, which must not
+lower the alignment.
+
 ### 5. Staging
 
-Not desired, not necessary, and required, for the source end, the target end and both. The plan shape is
-`[gather, staging -> staging, scatter]` or a subset. The middle copy is always contiguous and 1D and is the only step
-crossing devices. A staged chunk gets the window `[0, end - start)` in its staging buffer. Repeated staging ids imply
-identical size, device and host flag.
+Not desired (a direct strategy), not necessary (both windows contiguous, judged on the window, or host to host), and
+required, at the source end, the target end and both, for device pairs with and without the host. A side is staged
+exactly when its window is not one contiguous run. The plan is `[gather, middle, scatter]` or a subset; only the
+middle copy crosses devices and it is one run on both ends. A buffer lives on its side's device, in host memory near
+the other device when that side is the host. Staging buffers are exactly the 1D form, sized to the window, so a staged
+chunk gets `[0, end - start)`. The strategy's properties replace the spec's on every path. Buffers are used consistently
+and never shared between the plans of a set. Whether same-device copies should be staged is open, so only their
+correctness is pinned. `basic_staging_provider` hands out a distinct id per request.
 
 ### 6. d2d implementation
 
-All four implementations, applied to staged and unstaged plans. The device of each step is correct, only the host hop
-crosses the bus, and `host_staging_at_both` adds exactly one extra host-to-host copy.
+All four implementations, applied to single copies, hand-built staged plans and chunks. Only steps between two
+different devices are rewritten; `_at_source` and `_at_target` put one host buffer near that device,
+`host_staging_at_both` one near each with exactly one host-to-host copy between them. Afterwards no step goes
+directly between two devices, rewritten steps keep their properties, and host buffers are 1D and sized to the window.
 
 ### 7. `manifest_strategy`
 
-The cross product of copy type, properties, d2d implementation, chunking and reshaping, asserting `is_valid(set)`,
-the oracle`s verdict and property propagation for every combination. Randomized over shapes, boxes, windows and
-strategies: no SYCL, so thousands of cases cost little.
+`manifest_strategy` equals chaining the three steps. Then the cross product of copy type, properties, d2d
+implementation and six chunk sizes over ten named specs (host ends, same device, host to host, reshaping, unaligned and
+shifted windows), and 400 random specs and strategies, each checked against the oracle and the pipeline's invariants:
+valid and non-empty, the strategy's properties on every step, steps connect, staging used consistently, staged copies
+cross devices only in contiguous runs, no direct device-to-device step under host staging, no chunk over the size
+limit. Failures are counted and only the first per invariant is reported, so an unimplemented pipeline cannot flood
+the log. The random cases use a fixed seed; `COPYLIB_TEST_SEED` reproduces a different one.
 
 ### 8. Support: hashing and formatting
 
-Ported from the 2D suite and extended for the window — a hash ignoring `start` and `end` is a silent correctness bug.
-Two encodings of the same box must compare and hash equal, which is what canonical encoding buys. The Catch2
-`StringMaker` specializations for `data_layout` and `copy_spec` belong here too: they call the formatters, and Catch2
-invokes them exactly when an assertion fails.
+Hashes: equal values hash equal and changing any single field changes the hash, `start` and `end` included — a hash
+ignoring the window gives every chunk of a spec the same hash. Normalized encodings of the same bytes hash equal. Plan
+hashes depend on the order of steps.
+
+Formatting: the enum-like types keep their exact 2D output. The 3D `data_layout` format is not fixed, so only its
+properties are: it shows the base address or the staging id, and any single changed field changes the output. Specs,
+plans and sets print their parts in order, and `operator<<` and Catch2 print exactly what the formatter prints. The
+`StringMaker` specializations in `test_utils.hpp` route Catch2's failure output through the formatters.
 
 ### 9. Backend data correctness
 

@@ -16,6 +16,10 @@ set(TEST_FILES
   reference_tests.cpp
   normalization_tests.cpp
   chunking_tests.cpp
+  staging_tests.cpp
+  d2d_tests.cpp
+  manifest_tests.cpp
+  support_tests.cpp
 )
 
 # Build one object library per test file so that each file can also be run as its own executable without

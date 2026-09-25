@@ -89,15 +89,6 @@ TEST_CASE("the plane count of the allocation is not bounded", "[validation][!may
 	CHECK_FALSE(is_valid(layout));
 }
 
-TEST_CASE("the base must be at least 2-byte aligned", "[validation][!mayfail]") {
-	// the lowest byte of the base is what distinguishes a placed layout from a staging placeholder
-	CHECK(is_valid(ref::fields()));
-
-	auto layout = ref::fields();
-	layout.base = ref::base | 0x1;
-	CHECK_FALSE(is_valid(layout));
-}
-
 TEST_CASE("the window must lie within the box", "[validation][window][!mayfail]") {
 	CHECK(is_valid(ref::fields()));
 
@@ -155,11 +146,14 @@ TEST_CASE("a reshaping copy spec is valid", "[validation][!mayfail]") {
 	CHECK(is_valid(spec_from_fields(device_id::d0, source, device_id::d1, target)));
 }
 
-TEST_CASE("an empty copy plan or set is invalid", "[validation][!mayfail]") {
-	CHECK_FALSE(is_valid(copy_plan{}));
-	CHECK_FALSE(is_valid(parallel_copy_set{}));
+TEST_CASE("an empty copy plan or set is valid", "[validation]") {
+	// an empty plan copies nothing, which is not an error
+	CHECK(is_valid(copy_plan{}));
+	CHECK(is_valid(parallel_copy_set{}));
 
-	const auto spec = ref::spec();
-	CHECK(is_valid(copy_plan{spec}));
-	CHECK(is_valid(parallel_copy_set{copy_plan{spec}}));
+	// paired with rejections, so that the case cannot pass for an is_valid that accepts everything
+	auto broken = ref::spec();
+	broken.target_layout.end -= 8;
+	CHECK_FALSE(is_valid(copy_plan{ref::spec(), broken}));
+	CHECK_FALSE(is_valid(parallel_copy_set{copy_plan{ref::spec()}, copy_plan{broken}}));
 }

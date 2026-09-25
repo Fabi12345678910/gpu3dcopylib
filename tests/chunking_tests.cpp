@@ -8,10 +8,11 @@
 #include <algorithm>
 #include <vector>
 
-// Layer 5: apply_chunking() splits a spec into independent single-spec plans of at most chunk_size bytes each.
+// Layer 4: apply_chunking() splits a spec into independent single-spec plans of at most chunk_size bytes each.
 //
-// design.md: chunking keeps the box and narrows only the window; chunk boundaries are rounded to the local alignment
-// (the largest power of two up to 64 dividing the row extents and all strides); chunk_size == 0 means no chunking.
+// design.md: chunking keeps the box and narrows only the window; chunk boundaries are rounded to copy_alignment(), the
+// largest power of two up to 64 dividing both sides' row extents, d0_stride and d0_start_offset and the shift between
+// the windows; chunk_size == 0 means no chunking.
 
 using namespace copylib;
 using namespace copylib_testing;
@@ -108,7 +109,7 @@ TEST_CASE("source and target windows advance in lockstep", "[chunking][window][!
 }
 
 TEST_CASE("chunk boundaries are aligned", "[chunking][!mayfail]") {
-	// the reference box has row extent 24 and strides 80 and 1280, so its alignment is 8
+	// the reference box has row extent 24, d0_stride 80 and d0_start_offset 16, so its alignment is 8
 	const int64_t chunk_size = GENERATE(64, 77, 100);
 	CAPTURE(chunk_size);
 
@@ -206,4 +207,42 @@ TEST_CASE("a reshaping spec is chunked on both sides", "[chunking][!mayfail]") {
 
 	CHECK(implements(set, spec));
 	CHECK(chunk_lengths(set) == std::vector<int64_t>{8, 8, 8});
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// copy_alignment: every term matters, each case below goes wrong without its own
+
+TEST_CASE("the alignment of the documented specs", "[chunking][alignment]") {
+	CHECK(copy_alignment(ref::spec()) == ref::alignment); // row extent 24, d0_stride 80, d0_start_offset 16
+	CHECK(copy_alignment(reshaping_spec()) == 4);         // the 12-byte rows of the target
+}
+
+TEST_CASE("the alignment accounts for every term on both sides", "[chunking][alignment]") {
+	// 64-byte rows starting at byte 0 of 128-byte rows, which on their own allow 64
+	const auto clean = layout_from_fields(0x10000, 128, 4, 0, 0, 0, 64, 4, 1, 0, 256);
+	const auto on_both = [](const data_layout& l) { return spec_from_fields(device_id::d0, l, device_id::d1, l); };
+	REQUIRE(copy_alignment(on_both(clean)) == 64);
+
+	SECTION("row extent") {
+		CHECK(copy_alignment(on_both(layout_from_fields(0x10000, 64, 4, 0, 0, 0, 48, 4, 1, 0, 192))) == 16);
+	}
+	SECTION("d0_stride") {
+		CHECK(copy_alignment(on_both(layout_from_fields(0x10000, 96, 4, 0, 0, 0, 64, 4, 1, 0, 256))) == 32);
+	}
+	SECTION("d0_start_offset, on either side alone") {
+		// every row starts 4 bytes past a 64-byte boundary
+		const auto at_4 = layout_from_fields(0x20000, 128, 4, 4, 0, 0, 68, 4, 1, 0, 256);
+		CHECK(copy_alignment(spec_from_fields(device_id::d0, at_4, device_id::d1, clean)) == 4);
+		CHECK(copy_alignment(spec_from_fields(device_id::d0, clean, device_id::d1, at_4)) == 4);
+	}
+	SECTION("the shift between the windows") {
+		CHECK(copy_alignment(spec_from_fields(device_id::d0, with_window_fields(clean, 0, 248), device_id::d1, with_window_fields(clean, 8, 256))) == 8);
+	}
+	SECTION("but not an equal shift of both windows") {
+		// only the first and last chunk are ragged then, interior boundaries stay aligned on both sides
+		CHECK(copy_alignment(spec_from_fields(device_id::d0, with_window_fields(clean, 3, 256), device_id::d1, with_window_fields(clean, 3, 256))) == 64);
+	}
+	SECTION("odd rows fall back to single bytes") {
+		CHECK(copy_alignment(on_both(layout_from_fields(0x10000, 9, 4, 0, 0, 0, 9, 4, 1, 0, 36))) == 1);
+	}
 }

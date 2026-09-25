@@ -45,7 +45,7 @@ A layout is valid if:
 - `d0_stride` and `d1_stride` are non-zero.
 - The box fits, which also makes the encoding canonical: `0 <= d0_start < d0_end <= d0_stride` and `0 <= d1_start < d1_end <= d1_stride`. Otherwise one box has several encodings, which breaks `operator==`, hashing and plan chaining.
 - `0 <= d2_start < d2_end`. The allocation's plane count is unknown, so there is no upper bound.
-- `base` is at least 2-byte aligned, since staging placeholders are detected by their lowest byte.
+- `base` is assumed to be at least 2-byte aligned, since staging placeholders are detected by their lowest byte. `is_valid` does not check it.
 
 ### Byte window
 
@@ -101,14 +101,14 @@ The following go away: `use_2D_copy`, `use_3D_copy`, `is_2d_copy_available()`, `
 | Step | Input | Output |
 | --- | --- | --- |
 | `apply_chunking` | one spec | `parallel_copy_set` of independent single-spec plans, each at most `chunk_size` bytes. `chunk_size == 0` means no chunking. |
-| `apply_staging` | each single-spec plan | a sequential plan: `[gather, staging -> staging, scatter]`, or a subset of it. Only the middle copy crosses devices, and it is always contiguous. |
+| `apply_staging` | each single-spec plan | a sequential plan: `[gather, staging -> staging, scatter]`, or a subset of it. A side is staged exactly when its window is not one contiguous run; host-to-host copies are never staged. Only the middle copy crosses devices, and it is always contiguous. The strategy's properties replace the spec's. |
 | `apply_d2d_implementation` | each plan | device-to-device copies optionally routed through host staging buffers |
 
 Why stage at all: the gather/scatter kernels are cheap because they run in parallel inside one device's memory. Crossing the bus is expensive per call, so each chunk should cross in one large contiguous copy.
 
 ## Remaining restrictions and implementation notes
 
-- Chunk boundaries have to be rounded to a local alignment: the largest power of two up to 64 that divides the row extents and `d0_stride` of both sides (the plane size is a multiple of `d0_stride`, so it adds nothing). It keeps kernels on wide element types and is computed per copy, not stored. `chunk_size` must be at least this alignment.
+- Chunk boundaries have to be rounded to a local alignment: `copy_alignment()`, the largest power of two up to 64 that divides the row extents, `d0_stride` and `d0_start_offset` of both sides and the shift between the two windows (the plane size is a multiple of `d0_stride`, so it adds nothing; the base is assumed 64-byte aligned). It keeps kernels on wide element types and is computed per copy, not stored. `chunk_size` must be at least this alignment.
 - The kernel's `int32` index path has to check the full index span of the window on both sides, not individual fields.
 - Contiguity (`is_window_contiguous` on `data_layout`) is defined over the window. A window inside one row is a single `queue.copy`. There is no spec-level predicate; the backend asks both layouts.
 - The general 3D kernel needs two divmods per side per element, which is what `data_layout::offset_at()` computes. Mitigations: special-case 1D/2D boxes, or split same-extent copies into box-shaped pieces run as `nd_range<2>`/`<3>` kernels without division. Which of those applies is a property of the copy, not of one layout, so it is reduced from both sides at once (as Celerity does in `layout_nd_copy`) rather than reported per layout.

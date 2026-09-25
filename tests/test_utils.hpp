@@ -1,16 +1,42 @@
 #pragma once
 
 #include <copylib/core.hpp>
+#include <copylib/support.hpp>
+
+#include <catch2/catch_tostring.hpp>
 
 #include <algorithm>
 #include <compare>
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <string>
 #include <vector>
 
-// NOTE: Catch2 `StringMaker` specializations for `data_layout` / `copy_spec` belong here, but the formatters in
-// `support.hpp` are still placeholders producing empty strings. Add them together with the support layer tests.
+// Catch2 prints the operands of a failed comparison through these, so failures show layouts and specs through the
+// library's formatters. They print empty strings until src/support.cpp is implemented.
+namespace Catch {
+template <>
+struct StringMaker<copylib::data_layout> {
+	static std::string convert(const copylib::data_layout& v) { return copylib::utils::format("{}", v); }
+};
+template <>
+struct StringMaker<copylib::copy_spec> {
+	static std::string convert(const copylib::copy_spec& v) { return copylib::utils::format("{}", v); }
+};
+template <>
+struct StringMaker<copylib::copy_plan> {
+	static std::string convert(const copylib::copy_plan& v) { return copylib::utils::format("{}", v); }
+};
+template <>
+struct StringMaker<copylib::parallel_copy_set> {
+	static std::string convert(const copylib::parallel_copy_set& v) { return copylib::utils::format("{}", v); }
+};
+template <>
+struct StringMaker<copylib::copy_strategy> {
+	static std::string convert(const copylib::copy_strategy& v) { return copylib::utils::format("{}", v); }
+};
+} // namespace Catch
 
 namespace copylib_testing {
 
@@ -267,6 +293,102 @@ template <typename PlanOrSet>
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Helpers for the planning layers above chunking.
+
+struct staging_request {
+	copylib::device_id did;
+	bool on_host;
+	int64_t size;
+	copylib::staging_id id;
+};
+
+// A staging provider that hands out a fresh id per request and logs what was asked for. The id carries the requested
+// device and host flag, so a layout's id tells where its buffer lives. The log must outlive the provider.
+[[nodiscard]] inline copylib::staging_buffer_provider recording_provider(std::vector<staging_request>& log) {
+	return [&log](copylib::device_id did, bool on_host, int64_t size) {
+		const auto id = staging_id_from_fields(on_host, did, static_cast<uint32_t>(log.size()));
+		log.push_back({did, on_host, size, id});
+		return id;
+	};
+}
+
+// the staging id of an unplaced staging layout, read without touching an inactive union member
+[[nodiscard]] inline copylib::staging_id staging_of(const copylib::data_layout& layout) {
+	copylib::staging_id id;
+	std::memcpy(static_cast<void*>(&id), &layout, sizeof id); // staging_id is trivially copyable, just not trivial
+	return id;
+}
+
+// the exact encoding of a staging buffer holding `length` bytes: 1D, sized to fit, window [0, length)
+[[nodiscard]] inline bool is_staging_buffer(const copylib::data_layout& layout, int64_t length) {
+	return is_staging_space(layout) && same_fields(layout, staging_layout_from_fields(staging_of(layout), length));
+}
+
+// whether a window is one contiguous run, judged by the oracle rather than by the library
+[[nodiscard]] inline bool is_one_run(const copylib::data_layout& layout) { return reference_runs(layout).size() == 1; }
+
+[[nodiscard]] inline bool crosses_devices(const copylib::copy_spec& spec) { return spec.source_device != spec.target_device; }
+
+[[nodiscard]] inline bool is_device_to_device(const copylib::copy_spec& spec) {
+	return crosses_devices(spec) && spec.source_device != copylib::device_id::host && spec.target_device != copylib::device_id::host;
+}
+
+[[nodiscard]] inline bool same_spec(const copylib::copy_spec& a, const copylib::copy_spec& b) {
+	return a.source_device == b.source_device && a.target_device == b.target_device && a.properties == b.properties
+	       && same_fields(a.source_layout, b.source_layout) && same_fields(a.target_layout, b.target_layout);
+}
+
+[[nodiscard]] inline bool same_plan(const copylib::copy_plan& a, const copylib::copy_plan& b) {
+	return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), same_spec);
+}
+
+[[nodiscard]] inline bool same_set(const copylib::parallel_copy_set& a, const copylib::parallel_copy_set& b) {
+	return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), same_plan);
+}
+
+// each step reads exactly what the previous one wrote, on the same device
+[[nodiscard]] inline bool steps_connect(const copylib::copy_plan& plan) {
+	for(size_t i = 1; i < plan.size(); ++i) {
+		if(plan[i - 1].target_device != plan[i].source_device || !same_fields(plan[i - 1].target_layout, plan[i].source_layout)) return false;
+	}
+	return true;
+}
+
+// Every staging buffer is used with one size, and each step reaches it from where it lives: a host buffer from the
+// host, a device buffer from its own device.
+[[nodiscard]] inline bool staging_is_consistent(const copylib::parallel_copy_set& set) {
+	std::map<intptr_t, int64_t> size_of;
+	const auto consistent = [&](const copylib::data_layout& layout, copylib::device_id step_device) {
+		if(!is_staging_space(layout)) return true;
+		const auto id = staging_of(layout);
+		if(step_device != (id.on_host ? copylib::device_id::host : id.did)) return false;
+		const auto [it, inserted] = size_of.emplace(space_of(layout), layout.total_bytes());
+		return inserted || it->second == layout.total_bytes();
+	};
+	for(const auto& plan : set) {
+		for(const auto& spec : plan) {
+			if(!consistent(spec.source_layout, spec.source_device) || !consistent(spec.target_layout, spec.target_device)) return false;
+		}
+	}
+	return true;
+}
+
+[[nodiscard]] inline bool staging_is_consistent(const copylib::copy_plan& plan) { return staging_is_consistent(copylib::parallel_copy_set{plan}); }
+
+[[nodiscard]] inline bool all_steps_have(const copylib::parallel_copy_set& set, copylib::copy_properties properties) {
+	for(const auto& plan : set) {
+		for(const auto& spec : plan) {
+			if(spec.properties != properties) return false;
+		}
+	}
+	return true;
+}
+
+[[nodiscard]] inline bool all_steps_have(const copylib::copy_plan& plan, copylib::copy_properties properties) {
+	return all_steps_have(copylib::parallel_copy_set{plan}, properties);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 // The reference layout from docs/design.md: the box [2,5) x [3,7) x [4,10) of an `int[12,16,20]` allocation.
 // d0 is the innermost (contiguous) dimension, d2 the outermost, and all layout values are in bytes.
 namespace reference_box {
@@ -295,7 +417,7 @@ namespace reference_box {
 	// offset of the first byte of the box relative to the allocation base
 	constexpr int64_t first_byte = d2_start_offset * plane_bytes + d1_start_offset * d0_stride + d0_start_offset; // 2816
 
-	// largest power of two up to 64 dividing the row extent and both strides (24, 80, 1280)
+	// largest power of two up to 64 dividing the row extent, d0_stride and d0_start_offset (24, 80, 16)
 	constexpr int64_t alignment = 8;
 
 	// a base address that is safely distinguishable from a staging_id (which is detected via its lowest byte)
@@ -354,6 +476,9 @@ namespace shapes {
 		return layout_from_fields(at, ref::d0_stride, ref::d1_stride, ref::d0_start_offset, 0, 0, ref::d0_end_offset, ref::d1_stride, 2, 0,
 		    ref::row_extent * ref::d1_extent * 2);
 	}
+
+	// 288 bytes as six rows of 48 inside rows of 64: the length of the reference box in a different strided shape
+	[[nodiscard]] inline copylib::data_layout six_rows_of_48(intptr_t at) { return layout_from_fields(at, 64, 8, 0, 1, 0, 48, 7, 1, 0, 288); }
 
 	// int[1,1,6] and int[1,2,3], the reshaping pair from design.md
 	[[nodiscard]] inline copylib::data_layout one_row_of_six(intptr_t at) {
