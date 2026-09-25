@@ -46,7 +46,7 @@ copy_spec reshaping_spec() {
 
 } // namespace
 
-TEST_CASE("a chunk size of zero means no chunking", "[chunking][!mayfail]") {
+TEST_CASE("a chunk size of zero means no chunking", "[chunking]") {
 	const auto spec = ref::spec();
 	const auto set = apply_chunking(spec, chunking_strategy(0));
 
@@ -59,7 +59,7 @@ TEST_CASE("a chunk size of zero means no chunking", "[chunking][!mayfail]") {
 	CHECK(only.target_device == spec.target_device);
 }
 
-TEST_CASE("chunks implement the spec", "[chunking][!mayfail]") {
+TEST_CASE("chunks implement the spec", "[chunking]") {
 	const int64_t chunk_size = GENERATE(8, 24, 64, 77, 96, 100, 288, 1000);
 	CAPTURE(chunk_size);
 
@@ -69,7 +69,7 @@ TEST_CASE("chunks implement the spec", "[chunking][!mayfail]") {
 	CHECK(implements(set, spec));
 }
 
-TEST_CASE("every chunk is a single direct copy of at most chunk_size bytes", "[chunking][!mayfail]") {
+TEST_CASE("every chunk is a single direct copy of at most chunk_size bytes", "[chunking]") {
 	const int64_t chunk_size = GENERATE(8, 24, 64, 77, 96, 100);
 	CAPTURE(chunk_size);
 
@@ -84,7 +84,7 @@ TEST_CASE("every chunk is a single direct copy of at most chunk_size bytes", "[c
 	}
 }
 
-TEST_CASE("chunking keeps the box and narrows only the window", "[chunking][window][!mayfail]") {
+TEST_CASE("chunking keeps the box and narrows only the window", "[chunking][window]") {
 	const auto spec = ref::spec();
 	const auto set = apply_chunking(spec, chunking_strategy(64));
 
@@ -97,7 +97,7 @@ TEST_CASE("chunking keeps the box and narrows only the window", "[chunking][wind
 	}
 }
 
-TEST_CASE("source and target windows advance in lockstep", "[chunking][window][!mayfail]") {
+TEST_CASE("source and target windows advance in lockstep", "[chunking][window]") {
 	const auto spec = GENERATE(ref::spec(), reshaping_spec());
 	const auto set = apply_chunking(spec, chunking_strategy(8));
 
@@ -108,7 +108,7 @@ TEST_CASE("source and target windows advance in lockstep", "[chunking][window][!
 	}
 }
 
-TEST_CASE("chunk boundaries are aligned", "[chunking][!mayfail]") {
+TEST_CASE("chunk boundaries are aligned", "[chunking]") {
 	// the reference box has row extent 24, d0_stride 80 and d0_start_offset 16, so its alignment is 8
 	const int64_t chunk_size = GENERATE(64, 77, 100);
 	CAPTURE(chunk_size);
@@ -122,7 +122,7 @@ TEST_CASE("chunk boundaries are aligned", "[chunking][!mayfail]") {
 	}
 }
 
-TEST_CASE("chunks are as large as alignment permits", "[chunking][!mayfail]") {
+TEST_CASE("chunks are as large as alignment permits", "[chunking]") {
 	SECTION("perfectly divisible") {
 		CHECK(chunk_lengths(apply_chunking(ref::spec(), chunking_strategy(96))) == std::vector<int64_t>{96, 96, 96});
 	}
@@ -141,7 +141,7 @@ TEST_CASE("chunks are as large as alignment permits", "[chunking][!mayfail]") {
 	}
 }
 
-TEST_CASE("a chunk size below the alignment is raised to it", "[chunking][!mayfail]") {
+TEST_CASE("a chunk size below the alignment is raised to it", "[chunking]") {
 	// design.md: the reference box has alignment 8, so chunks of 4 or 1 byte become chunks of 8
 	const int64_t chunk_size = GENERATE(1, 4, 7);
 	CAPTURE(chunk_size);
@@ -153,7 +153,7 @@ TEST_CASE("a chunk size below the alignment is raised to it", "[chunking][!mayfa
 	CHECK(chunk_lengths(set) == std::vector<int64_t>(ref::total_bytes / ref::alignment, ref::alignment));
 }
 
-TEST_CASE("chunk boundaries of an unaligned window sit at absolute aligned offsets", "[chunking][window][!mayfail]") {
+TEST_CASE("chunk boundaries of an unaligned window sit at absolute aligned offsets", "[chunking][window]") {
 	// design.md: boundaries are multiples of the alignment in packed offsets, not relative to the window start, so only
 	// the window's own ends can be unaligned
 	auto spec = ref::spec();
@@ -186,7 +186,7 @@ TEST_CASE("chunk boundaries of an unaligned window sit at absolute aligned offse
 	}
 }
 
-TEST_CASE("a partial window is chunked within the window", "[chunking][window][!mayfail]") {
+TEST_CASE("a partial window is chunked within the window", "[chunking][window]") {
 	auto spec = ref::spec();
 	spec.source_layout = with_window_fields(spec.source_layout, 24, 264);
 	spec.target_layout = with_window_fields(spec.target_layout, 24, 264);
@@ -200,7 +200,7 @@ TEST_CASE("a partial window is chunked within the window", "[chunking][window][!
 	CHECK(chunks.back().source_layout.end == 264);
 }
 
-TEST_CASE("a reshaping spec is chunked on both sides", "[chunking][!mayfail]") {
+TEST_CASE("a reshaping spec is chunked on both sides", "[chunking]") {
 	// source row extent 24, target row extent 12, strides 24 / 24 and 12 / 24: the alignment is 4
 	const auto spec = reshaping_spec();
 	const auto set = apply_chunking(spec, chunking_strategy(8));

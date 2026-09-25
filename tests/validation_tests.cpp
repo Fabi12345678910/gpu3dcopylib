@@ -17,11 +17,11 @@ using copylib_testing::with_window_fields;
 namespace ref = copylib_testing::reference_box;
 namespace shapes = copylib_testing::shapes;
 
-TEST_CASE("a well-formed layout is valid", "[validation][!mayfail]") {
+TEST_CASE("a well-formed layout is valid", "[validation]") {
 	CHECK(is_valid(ref::fields()));
 }
 
-TEST_CASE("strides must be non-zero", "[validation][!mayfail]") {
+TEST_CASE("strides must be non-zero", "[validation]") {
 	CHECK(is_valid(ref::fields()));
 
 	auto no_d0 = ref::fields();
@@ -33,7 +33,7 @@ TEST_CASE("strides must be non-zero", "[validation][!mayfail]") {
 	CHECK_FALSE(is_valid(no_d1));
 }
 
-TEST_CASE("the box must lie inside one row and one plane", "[validation][!mayfail]") {
+TEST_CASE("the box must lie inside one row and one plane", "[validation]") {
 	// this is also what makes the encoding canonical: a box that could be expressed by moving whole rows or planes
 	// into the next dimension has more than one encoding, which would break operator== and hashing
 	CHECK(is_valid(ref::fields()));
@@ -65,7 +65,7 @@ TEST_CASE("the box must lie inside one row and one plane", "[validation][!mayfai
 	}
 }
 
-TEST_CASE("every dimension must be non-empty", "[validation][!mayfail]") {
+TEST_CASE("every dimension must be non-empty", "[validation]") {
 	CHECK(is_valid(ref::fields()));
 
 	for(const int dimension : {0, 1, 2}) {
@@ -78,7 +78,7 @@ TEST_CASE("every dimension must be non-empty", "[validation][!mayfail]") {
 	}
 }
 
-TEST_CASE("the plane count of the allocation is not bounded", "[validation][!mayfail]") {
+TEST_CASE("the plane count of the allocation is not bounded", "[validation]") {
 	// there is no d2_stride, so nothing says how many planes the allocation has
 	auto layout = ref::fields();
 	layout.d2_start_offset = 1000;
@@ -89,7 +89,7 @@ TEST_CASE("the plane count of the allocation is not bounded", "[validation][!may
 	CHECK_FALSE(is_valid(layout));
 }
 
-TEST_CASE("the window must lie within the box", "[validation][window][!mayfail]") {
+TEST_CASE("the window must lie within the box", "[validation][window]") {
 	CHECK(is_valid(ref::fields()));
 
 	SECTION("a window may not extend past the end of the box") {
@@ -115,7 +115,7 @@ TEST_CASE("the window must lie within the box", "[validation][window][!mayfail]"
 	}
 }
 
-TEST_CASE("a copy spec requires equal window lengths on both sides", "[validation][!mayfail]") {
+TEST_CASE("a copy spec requires equal window lengths on both sides", "[validation]") {
 	const auto source = ref::fields();
 
 	SECTION("equal windows are valid") {
@@ -136,7 +136,7 @@ TEST_CASE("a copy spec requires equal window lengths on both sides", "[validatio
 	}
 }
 
-TEST_CASE("a reshaping copy spec is valid", "[validation][!mayfail]") {
+TEST_CASE("a reshaping copy spec is valid", "[validation]") {
 	// design.md: source and target may have different shapes, so int[1,1,6] -> int[1,2,3] is allowed
 	const auto source = shapes::one_row_of_six(0x10000);
 	const auto target = shapes::two_rows_of_three(0x20000);

@@ -9,8 +9,8 @@ failures, but they do not fail the build, so CI stays green and the failure coun
 The CI workflow writes the totals into the GitHub run summary:
 
 ```
-test cases:  69 |  34 passed | 35 failed as expected
-assertions: 288 | 193 passed | 95 failed as expected
+test cases: 106 |  70 passed | 36 failed as expected
+assertions: 876 | 716 passed | 160 failed as expected
 ```
 
 Remove the `[!mayfail]` tag from a case once the functions it covers are implemented, so that it starts guarding them

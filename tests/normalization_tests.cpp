@@ -28,7 +28,7 @@ std::vector<data_layout> full_window_layouts() {
 // ---------------------------------------------------------------------------------------------------------------------
 // Semantics
 
-TEST_CASE("normalization preserves the bytes a layout describes", "[normalization][!mayfail]") {
+TEST_CASE("normalization preserves the bytes a layout describes", "[normalization]") {
 	auto layouts = full_window_layouts();
 	layouts.push_back(with_window_fields(shapes::whole_allocation(), 100, 5000));
 	layouts.push_back(with_window_fields(shapes::full_rows_of_three_planes(), 300, 700));
@@ -40,7 +40,7 @@ TEST_CASE("normalization preserves the bytes a layout describes", "[normalizatio
 	}
 }
 
-TEST_CASE("normalization leaves the window unchanged", "[normalization][window][!mayfail]") {
+TEST_CASE("normalization leaves the window unchanged", "[normalization][window]") {
 	// collapsing keeps the packed order, which is ascending address order, so packed offsets stay the same
 	const auto layout = with_window_fields(shapes::whole_allocation(), 100, 5000);
 	const auto normalized = normalize(layout);
@@ -49,7 +49,7 @@ TEST_CASE("normalization leaves the window unchanged", "[normalization][window][
 	CHECK(normalized.end == 5000);
 }
 
-TEST_CASE("each row of a normalized box is a maximal contiguous run", "[normalization][!mayfail]") {
+TEST_CASE("each row of a normalized box is a maximal contiguous run", "[normalization]") {
 	for(const auto& layout : full_window_layouts()) {
 		const auto runs = reference_runs(layout);
 		const auto normalized = normalize(layout);
@@ -59,7 +59,7 @@ TEST_CASE("each row of a normalized box is a maximal contiguous run", "[normaliz
 	}
 }
 
-TEST_CASE("normalization is idempotent", "[normalization][!mayfail]") {
+TEST_CASE("normalization is idempotent", "[normalization]") {
 	for(const auto& layout : full_window_layouts()) {
 		const auto once = normalize(layout);
 		// without this, a placeholder returning an empty layout would pass: normalize({}) == {}
@@ -68,7 +68,7 @@ TEST_CASE("normalization is idempotent", "[normalization][!mayfail]") {
 	}
 }
 
-TEST_CASE("a normalized layout is valid", "[normalization][!mayfail]") {
+TEST_CASE("a normalized layout is valid", "[normalization]") {
 	for(const auto& layout : full_window_layouts()) {
 		CHECK(is_valid(normalize(layout)));
 	}
@@ -77,14 +77,14 @@ TEST_CASE("a normalized layout is valid", "[normalization][!mayfail]") {
 // ---------------------------------------------------------------------------------------------------------------------
 // The normal form
 
-TEST_CASE("a single run normalizes to the 1D form", "[normalization][!mayfail]") {
+TEST_CASE("a single run normalizes to the 1D form", "[normalization]") {
 	// both strides become the end of the run, regardless of the allocation the run came from
 	CHECK(same_fields(normalize(shapes::whole_allocation()), one_run(ref::base, 0, 12 * ref::plane_bytes)));
 	CHECK(same_fields(normalize(shapes::full_rows_of_one_plane()), one_run(ref::base, 240, 320)));
 	CHECK(same_fields(normalize(shapes::single_row()), one_run(ref::base, 16, 24)));
 }
 
-TEST_CASE("evenly spaced runs normalize to the 2D form", "[normalization][!mayfail]") {
+TEST_CASE("evenly spaced runs normalize to the 2D form", "[normalization]") {
 	SECTION("one run per plane") {
 		CHECK(same_fields(normalize(shapes::full_rows_of_three_planes()), uniform_runs(ref::base, 2800, 320, 3, 1280)));
 	}
@@ -95,13 +95,13 @@ TEST_CASE("evenly spaced runs normalize to the 2D form", "[normalization][!mayfa
 	}
 }
 
-TEST_CASE("a two-level grid is already in normal form", "[normalization][!mayfail]") {
+TEST_CASE("a two-level grid is already in normal form", "[normalization]") {
 	CHECK(same_fields(normalize(ref::fields()), ref::fields()));
 	// paired with a collapsing case, so that the case cannot pass while normalize() returns its input unchanged
 	CHECK(same_fields(normalize(shapes::single_row()), one_run(ref::base, 16, 24)));
 }
 
-TEST_CASE("the normal form is unique", "[normalization][!mayfail]") {
+TEST_CASE("the normal form is unique", "[normalization]") {
 	// different encodings of the same bytes normalize to identical fields
 
 	SECTION("a single row, encoded with three different sets of strides") {
@@ -125,7 +125,7 @@ TEST_CASE("the normal form is unique", "[normalization][!mayfail]") {
 // ---------------------------------------------------------------------------------------------------------------------
 // Specs
 
-TEST_CASE("normalizing a spec normalizes each side independently", "[normalization][!mayfail]") {
+TEST_CASE("normalizing a spec normalizes each side independently", "[normalization]") {
 	// the source is one contiguous run of 320 bytes, the target eight runs of 40 bytes; under the 2D library's rule of
 	// collapsing only as far as both sides allow, the source would stay uncollapsed
 	const auto source = shapes::full_rows_of_one_plane(0x10000);
@@ -141,7 +141,7 @@ TEST_CASE("normalizing a spec normalizes each side independently", "[normalizati
 	CHECK(normalized.target_device == spec.target_device);
 }
 
-TEST_CASE("normalizing a spec preserves what it copies", "[normalization][!mayfail]") {
+TEST_CASE("normalizing a spec preserves what it copies", "[normalization]") {
 	// 768 bytes from the front of a contiguous allocation into 32 partial rows: both sides collapse, to different forms
 	constexpr int64_t length = 768;
 	const auto source = with_window_fields(shapes::whole_allocation(0x10000), 0, length);

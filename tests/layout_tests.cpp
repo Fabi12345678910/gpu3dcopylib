@@ -41,7 +41,7 @@ std::vector<run> collect_runs(const data_layout& layout) {
 
 } // namespace
 
-TEST_CASE("the box constructor stores the layout fields", "[layout][!mayfail]") {
+TEST_CASE("the box constructor stores the layout fields", "[layout]") {
 	const auto layout = ref::make();
 
 	CHECK(layout.base == ref::base);
@@ -55,7 +55,7 @@ TEST_CASE("the box constructor stores the layout fields", "[layout][!mayfail]") 
 	CHECK(layout.d2_end_offset == ref::d2_end_offset);
 }
 
-TEST_CASE("a freshly constructed layout has a window covering the whole box", "[layout][window][!mayfail]") {
+TEST_CASE("a freshly constructed layout has a window covering the whole box", "[layout][window]") {
 	// design.md: "Constructors set the full box explicitly. There is no '0 means everything' shorthand."
 	const auto layout = ref::make();
 
@@ -63,7 +63,7 @@ TEST_CASE("a freshly constructed layout has a window covering the whole box", "[
 	CHECK(layout.end == ref::total_bytes);
 }
 
-TEST_CASE("a 1D constructor describes a contiguous run", "[layout][!mayfail]") {
+TEST_CASE("a 1D constructor describes a contiguous run", "[layout]") {
 	constexpr int64_t offset = 128;
 	constexpr int64_t length = 256;
 	const data_layout layout{ref::base, offset, length};
@@ -76,7 +76,7 @@ TEST_CASE("a 1D constructor describes a contiguous run", "[layout][!mayfail]") {
 	CHECK(copylib_testing::same_fields(layout, copylib_testing::normal_form::one_run(ref::base, offset, length)));
 }
 
-TEST_CASE("layouts compare equal exactly when all their fields match", "[layout][equality][!mayfail]") {
+TEST_CASE("layouts compare equal exactly when all their fields match", "[layout][equality]") {
 	const auto layout = ref::fields();
 
 	CHECK(layout == ref::fields());
@@ -111,7 +111,7 @@ TEST_CASE("the window length is the size of the copy", "[layout][window]") {
 	CHECK(layout.window_length() == 24);
 }
 
-TEST_CASE("the reference box covers the documented number of bytes", "[layout][!mayfail]") {
+TEST_CASE("the reference box covers the documented number of bytes", "[layout]") {
 	// design.md: 24 bytes x 4 rows x 3 planes = 288 bytes, starting at byte 2816
 	CHECK(ref::total_bytes == 288); // guards the test's own arithmetic
 	CHECK(ref::first_byte == 2816); // ditto
@@ -119,7 +119,7 @@ TEST_CASE("the reference box covers the documented number of bytes", "[layout][!
 	CHECK(ref::fields().total_bytes() == 288);
 }
 
-TEST_CASE("the end offset is the first byte past the box", "[layout][!mayfail]") {
+TEST_CASE("the end offset is the first byte past the box", "[layout]") {
 	// relative to the allocation base, so that it can be bounds-checked against a buffer size:
 	// the last plane is plane 4, its last row is row 6, and that row ends 40 bytes in.
 	constexpr int64_t expected = (ref::d2_end_offset - 1) * ref::plane_bytes + (ref::d1_end_offset - 1) * ref::d0_stride + ref::d0_end_offset;
@@ -129,7 +129,7 @@ TEST_CASE("the end offset is the first byte past the box", "[layout][!mayfail]")
 	CHECK(whole_allocation().end_offset() == 12 * ref::plane_bytes);
 }
 
-TEST_CASE("offset_at maps packed offsets into the allocation", "[layout][!mayfail]") {
+TEST_CASE("offset_at maps packed offsets into the allocation", "[layout]") {
 	const auto layout = ref::fields();
 
 	CHECK(layout.offset_at(0) == ref::first_byte);                     // 2816, first byte of the box
@@ -140,7 +140,7 @@ TEST_CASE("offset_at maps packed offsets into the allocation", "[layout][!mayfai
 	CHECK(layout.offset_at(ref::total_bytes - 1) == layout.end_offset() - 1);
 }
 
-TEST_CASE("a strided box is not contiguous", "[layout][!mayfail]") {
+TEST_CASE("a strided box is not contiguous", "[layout]") {
 	// the box covers 24 of the 80 bytes of each row, and 4 of the 16 rows of each plane
 	const auto layout = ref::fields();
 
@@ -152,7 +152,7 @@ TEST_CASE("a strided box is not contiguous", "[layout][!mayfail]") {
 	CHECK(whole_allocation().is_window_contiguous());
 }
 
-TEST_CASE("a box spanning the whole allocation is contiguous", "[layout][!mayfail]") {
+TEST_CASE("a box spanning the whole allocation is contiguous", "[layout]") {
 	const auto layout = whole_allocation();
 
 	CHECK(layout.total_bytes() == 12 * ref::plane_bytes);
@@ -161,14 +161,14 @@ TEST_CASE("a box spanning the whole allocation is contiguous", "[layout][!mayfai
 	CHECK(layout.is_window_contiguous());
 }
 
-TEST_CASE("a box covering a single row is contiguous", "[layout][!mayfail]") {
+TEST_CASE("a box covering a single row is contiguous", "[layout]") {
 	const auto layout = single_row();
 
 	CHECK(layout.total_bytes() == ref::row_extent);
 	CHECK(layout.is_window_contiguous());
 }
 
-TEST_CASE("full rows of one plane have collapsible fragments", "[layout][!mayfail]") {
+TEST_CASE("full rows of one plane have collapsible fragments", "[layout]") {
 	const auto layout = full_rows_of_one_plane();
 
 	CHECK(layout.total_bytes() == ref::rows * ref::d0_stride);
@@ -176,7 +176,7 @@ TEST_CASE("full rows of one plane have collapsible fragments", "[layout][!mayfai
 	CHECK(layout.is_window_contiguous());
 }
 
-TEST_CASE("contiguity is a property of the window, not of the box", "[layout][window][!mayfail]") {
+TEST_CASE("contiguity is a property of the window, not of the box", "[layout][window]") {
 	// design.md: "A window inside one row is a single queue.copy."
 	auto layout = ref::fields();
 	REQUIRE_FALSE(layout.is_window_contiguous());
@@ -186,7 +186,7 @@ TEST_CASE("contiguity is a property of the window, not of the box", "[layout][wi
 	CHECK(layout.is_window_contiguous());
 }
 
-TEST_CASE("iterating a full window yields one run per row", "[layout][window][!mayfail]") {
+TEST_CASE("iterating a full window yields one run per row", "[layout][window]") {
 	const auto runs = collect_runs(ref::fields());
 
 	// .at() rather than [] or back(): with the placeholder, GCC inlines an empty run list and warns about the
@@ -202,7 +202,7 @@ TEST_CASE("iterating a full window yields one run per row", "[layout][window][!m
 	CHECK(runs.at(11).offset + runs.at(11).length == 5640);        // ends where the box ends
 }
 
-TEST_CASE("iterating a partial window yields partial runs", "[layout][window][!mayfail]") {
+TEST_CASE("iterating a partial window yields partial runs", "[layout][window]") {
 	// a window starting in the middle of the first row and ending in the middle of the second
 	auto layout = ref::fields();
 	layout.start = 12;
@@ -217,7 +217,7 @@ TEST_CASE("iterating a partial window yields partial runs", "[layout][window][!m
 	CHECK(runs.at(1).length == 16);
 }
 
-TEST_CASE("the runs of a window cover exactly its length", "[layout][window][!mayfail]") {
+TEST_CASE("the runs of a window cover exactly its length", "[layout][window]") {
 	auto layout = ref::fields();
 	layout.start = 7;
 	layout.end = ref::total_bytes - 5;
@@ -234,7 +234,7 @@ TEST_CASE("the runs of a window cover exactly its length", "[layout][window][!ma
 	CHECK(covered == layout.window_length());
 }
 
-TEST_CASE("offset_at agrees with the reference interpreter for every byte", "[layout][!mayfail]") {
+TEST_CASE("offset_at agrees with the reference interpreter for every byte", "[layout]") {
 	for(const auto& layout : {ref::fields(), whole_allocation(), single_row(), full_rows_of_one_plane(), with_window_fields(ref::fields(), 7, 283)}) {
 		const auto expected = reference_offsets(layout);
 		REQUIRE_FALSE(expected.empty());
@@ -246,7 +246,7 @@ TEST_CASE("offset_at agrees with the reference interpreter for every byte", "[la
 	}
 }
 
-TEST_CASE("the runs of a window cover exactly the reference offsets", "[layout][window][!mayfail]") {
+TEST_CASE("the runs of a window cover exactly the reference offsets", "[layout][window]") {
 	for(const auto& layout : {ref::fields(), whole_allocation(), full_rows_of_one_plane(), with_window_fields(ref::fields(), 12, 40)}) {
 		std::vector<int64_t> covered;
 		for_each_contiguous_run(layout, [&](int64_t offset, int64_t length) {
@@ -258,21 +258,21 @@ TEST_CASE("the runs of a window cover exactly the reference offsets", "[layout][
 	}
 }
 
-TEST_CASE("the base pointer of a placed layout is its base address", "[layout][!mayfail]") {
+TEST_CASE("the base pointer of a placed layout is its base address", "[layout]") {
 	const auto layout = ref::fields();
 
 	CHECK(layout.base_ptr() == reinterpret_cast<std::byte*>(ref::base));
 	CHECK_FALSE(layout.is_unplaced_staging());
 }
 
-TEST_CASE("a staging layout is unplaced until it is fulfilled", "[layout][staging][!mayfail]") {
+TEST_CASE("a staging layout is unplaced until it is fulfilled", "[layout][staging]") {
 	auto layout = ref::fields();
 	layout.staging = staging_id{false, device_id::d1, 7};
 
 	CHECK(layout.is_unplaced_staging());
 }
 
-TEST_CASE("staging ids round-trip their fields", "[layout][staging][!mayfail]") {
+TEST_CASE("staging ids round-trip their fields", "[layout][staging]") {
 	const staging_id staging{true, device_id::d3, 42};
 
 	CHECK(staging.on_host == true);
