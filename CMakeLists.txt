@@ -44,6 +44,9 @@ target_include_directories(copylib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
+# BS::thread_pool 5.0.0 (MIT, https://github.com/bshoshany/thread-pool), vendored as in the 2D library. Public, since the
+# executor will own a pool and BS::thread_pool is a class template that cannot usefully be forward-declared.
+target_include_directories(copylib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/vendor>)
 target_compile_features(copylib PUBLIC cxx_std_20)
 
 # the public headers expose SYCL types, but SimSYCL only links itself privately in add_sycl_to_target
