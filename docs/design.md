@@ -120,20 +120,20 @@ Why stage at all: the gather/scatter kernels are cheap because they run in paral
 
 These decide the public API and should be settled before implementing the backend:
 
-1. **Ownership.** Should the executor take the caller's devices and queues instead of creating its own? The SimSYCL system configuration, CPU affinity changes and benchmark data buffers should move out of the library.
-2. **Blocking vs. async execution.** Currently `execute_copy` blocks, and plan steps wait on each other with `wait_and_throw()`. Alternative: chain steps with `sycl::event`s and return an event per plan. This determines the `execute_copy` return types. The thread pool is also a function-local `static` sized on the first call.
+1. **Ownership.** Decided for now: the executor creates and owns its queues, see [async-execution.md](async-execution.md#decisions). Taking the caller's devices and queues is left to the Celerity integration. The SimSYCL system configuration moves into the test harness. Whether the CPU affinity changes and the data buffers also leave the library is still open.
+2. **Blocking vs. async execution.** Decided: `execute_copy` hands the plans to worker threads on an executor-owned `BS::thread_pool` and returns a handle with `is_complete()` and `wait()`, see [async-execution.md](async-execution.md#decisions).
 3. **Error handling.** `COPYLIB_ENSURE` calls `std::exit(1)`. Proposal: invalid input from the caller throws; internal invariants are checked in debug builds only.
 
 These can be settled during implementation:
 
 4. **Staging alignment bug** in the 2D fulfiller (`size + alignment % size` does not round up). Fix it with proper round-up alignment.
-5. **Staging memory reuse.** All staging buffers of a set currently have to fit in `buffer_size` at once.
+5. **Staging memory reuse.** All staging buffers of a set currently have to fit in `buffer_size` at once. Tied to the open staging lifetime question in [async-execution.md](async-execution.md#open-questions).
 6. **Strategy selection.** Should the library offer `select_strategy(spec, exec)` with benchmark-based thresholds?
 7. **Testing approach.** Property tests on SimSYCL comparing against a byte-by-byte reference copy.
 
 ## Upcoming steps
 
-1. Settle open decisions 1-3.
+1. ~~Settle open decisions 1-3.~~ 1 and 2 are settled, see [async-execution.md](async-execution.md#decisions); 3, error handling, is deferred.
 2. ~~Update the skeleton.~~ Done: the window is in `data_layout` and its constructors, the 1D constructors take a
    length instead of a `fragment_length`, the native 2D/3D copy API and `COPYLIB_USE_CUDA` are gone, and the README
    table and example are updated. The accessors were reworked by dropping rather than defining them:
@@ -147,6 +147,6 @@ These can be settled during implementation:
    - `unit_stride()` is renamed to `is_window_contiguous()`, which is what it means once it is defined over the window.
 3. Write tests first, ahead of the implementation. In progress, see [testing.md](testing.md) for the layered plan and
    for how progress is reported in CI.
-4. Implement the core: the layout accessors, `is_valid`, `normalize`, `apply_chunking`, `apply_staging`, `apply_d2d_implementation` and `manifest_strategy`. `is_equivalent` was dropped: the 2D implementation was of little use, and the tests check plans against their own reference model instead.
-5. Implement the backend: staging fulfiller with correct alignment, the `execute_copy` paths (host `memcpy`, contiguous copy, merged 1D runs), and the kernels (`int32` span check, special cases).
+4. ~~Implement the core.~~ Done, all planning layers pass: the layout accessors, `is_valid`, `normalize`, `apply_chunking`, `apply_staging`, `apply_d2d_implementation` and `manifest_strategy`. `is_equivalent` was dropped: the 2D implementation was of little use, and the tests check plans against their own reference model instead.
+5. Implement the backend: staging fulfiller with correct alignment, the `execute_copy` paths (host `memcpy`, contiguous copy, merged 1D runs), the kernels (`int32` span check, special cases), and the worker threads with their handle.
 6. Add strategy selection and port the benchmarks. Compare against the 2D library, especially strided copies involving the host.

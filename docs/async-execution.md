@@ -1,6 +1,6 @@
 # Async Execution: Analysis
 
-Background for open decisions 1-3 in [design.md](design.md#open-decisions). This document records how the 2D library executes copies, how Celerity (the main consumer of this library) runs asynchronous work, and what that implies for the execution API of the 3D library.
+Background for open decisions 1-3 in [design.md](design.md#open-decisions); the decisions taken are recorded in [Decisions](#decisions). This document records how the 2D library executes copies, how Celerity (the main consumer of this library) runs asynchronous work, and what that implies for the execution API of the 3D library.
 
 Sources:
 
@@ -231,16 +231,110 @@ Its cost is that the copy waits for its predecessors to complete instead of bein
 
 Build for route 1, and keep route 2 open by putting queue acquisition behind a seam, so that both "the assigned lane plus private lanes" and "lanes chosen entirely by the library" are expressible. Then measure: two lanes have to beat one in-order queue plus the join submission. Propose route 2 upstream only with those numbers in hand.
 
-## Proposal
+## Decisions
 
-1. **Ownership.** The executor takes the caller's devices and in-order queues. Copy calls take explicit (device, lane) targets, plus any private queues the library creates in the caller's context (route 1 above).
-2. **Async execution.** `execute_copy` returns a handle with `is_complete()` (monotonic, cheap, non-throwing) and an optional execution time. Internally the handle keeps a first/last event pair per lane touched, plus worker-thread completion for the parts that need runtime-driven submission. Queues are flushed after submission.
-3. **Error handling.** `is_valid()` covers caller input. All other failures go through a replaceable failure handler. No exceptions cross the async boundary.
+Taken on 2026-09-25 for building the library itself. Celerity integration follows later and may revisit them; in
+particular, [consequence 3](#3-take-device-and-lane-as-parameters) makes caller-provided lanes a requirement there.
+
+| Topic | Decision |
+| --- | --- |
+| Handle | **Option C.** `execute_copy` hands the plans to worker threads and returns immediately. Workers block between steps as in the 2D library, and the handle tracks their completion. |
+| Waiting | The handle has a blocking `wait()` next to the non-blocking `is_complete()`. Tests and benchmarks wait; a Celerity adapter would only poll. |
+| Thread pool | `BS::thread_pool`, as in the 2D library, but owned by the executor rather than a function-local `static`. It still has to be added as a dependency. |
+| Queues | The executor creates and owns its in-order queues, as in the 2D library. |
+| Staging lifetime | Open, see [Open questions](#open-questions). |
+| Error handling | Deferred, see decision 3 in [design.md](design.md#open-decisions). |
+
+Compared with the analysis above, this leaves out two things for now, both motivated by Celerity: polling events
+(option B) for the parts that need no runtime decisions, and taking the caller's queues. Keeping queue selection behind
+one function in the executor leaves room for caller-provided lanes later.
+
+## Proposed interface
+
+A starting point for the backend, not implemented yet.
+
+```cpp
+namespace copylib {
+
+namespace detail {
+	struct copy_state; // shared by a handle and the workers running its plans
+}
+
+// Completion state of one execute_copy call. Copies of a handle share the same state.
+class copy_handle {
+  public:
+	// true once every plan has finished, successfully or not; monotonic, never blocks, never throws
+	[[nodiscard]] bool is_complete() const;
+
+	// blocks until is_complete() is true; never throws
+	void wait() const;
+
+	// the first failure of any plan once complete, empty on success
+	[[nodiscard]] std::optional<std::string> error() const;
+
+	// time from the call until the last plan finished, once complete
+	[[nodiscard]] std::optional<std::chrono::nanoseconds> execution_time() const;
+
+  private:
+	std::shared_ptr<detail::copy_state> state;
+};
+
+// hands the plans of the set to the executor's thread pool and returns immediately
+[[nodiscard]] copy_handle execute_copy(executor& exec, const parallel_copy_set& set);
+
+} // namespace copylib
+```
+
+In use:
+
+```cpp
+copylib::executor exec(buffer_size, 2, 2);
+const auto set = copylib::manifest_strategy(spec, strategy, copylib::basic_staging_provider{});
+
+const auto handle = copylib::execute_copy(exec, set);
+// ... other work ...
+handle.wait();
+if(const auto error = handle.error()) { copylib::utils::err_print("copy failed: {}\n", *error); }
+```
+
+The per-spec and per-plan `execute_copy` overloads become synchronous building blocks in `detail`, run by the workers.
+
+### Handle details
+
+- **A counter, not futures.** `copy_state` holds an atomic count of unfinished plans, the start and end time, the first
+  error, and a mutex with a condition variable for `wait()`. Each worker decrements the count when its plan ends, and
+  the last one records the end time and notifies. `is_complete()` is a single atomic load and monotonic by
+  construction. Keeping the pool's per-task `std::future`s instead would make every poll cost one check per plan, 4096
+  for a large chunked set, and `future::get()` rethrows, which the handle must not.
+- **Failures complete, too.** A worker catches whatever its plan throws (a `sycl::exception` from waiting on a step, or
+  any `std::exception`), records the first message and ends that plan; the other plans run to completion, so `wait()`
+  always returns. `COPYLIB_ENSURE` still calls `std::exit` and must not fire on a worker; that is part of the deferred
+  error handling.
+- **Workers wait on their own step's event**, not on the whole queue as the 2D library's `wait_and_throw()` did.
+  Several calls can share the executor's queues, and waiting on a queue would also wait for the other calls' work.
+- **Dropping a handle** neither blocks nor cancels the copy, because the workers keep the state alive. Source and target
+  memory must stay valid until the handle completes, as for any asynchronous copy. Destroying the executor waits for its
+  pool, and with it for every copy in flight.
+- **Calls are independent.** Several can be in flight, their plans interleave on the pool, and nothing orders one call
+  against another. A second copy that reads what the first one writes has to wait on the first handle.
+- **Execution time** is wall-clock time from the call to the last completion (`std::chrono::steady_clock`), so it
+  includes time spent queued in the pool. Per-step device times would need profiling-enabled queues, which can be added
+  later.
+- **Pool size** stays as in the 2D library, one worker per queue index, until benchmarks say otherwise.
 
 ## Open questions
 
-- **Which route to take for multi-lane execution**, pending the measurement described in [Which one](#which-one). A third option, not worked out here, is to keep manifesting as a pure planning API that Celerity's instruction graph generator calls, so that it emits one instruction per plan and assigns each its own lane.
-- **Staging ownership.** Staging buffers could come from the caller's allocator, which Celerity tracks, instead of from buffers owned by the executor.
+- **Staging lifetime.** The 2D fulfiller hands out offsets from 0 on every call, which was safe only because calls
+  blocked until their copies finished. With option C, two calls in flight receive the same staging memory. The options
+  are an allocator owned by the executor that releases a call's buffers when its last plan finishes, serialising staged
+  calls so that a second one waits for the first, or staging memory from the caller (next point). Whichever it is,
+  reclamation hangs off the same completion point as the handle. Until this is decided, staged calls must not overlap.
+- **Staging ownership.** Staging buffers could come from the caller's allocator, which Celerity tracks, instead of from
+  buffers owned by the executor.
+- **Multi-lane execution under Celerity**, part of the integration: which [route](#working-within-the-lane-constraint)
+  to take, pending the measurement described in [Which one](#which-one). A third option, not worked out here, is to keep
+  manifesting as a pure planning API that Celerity's instruction graph generator calls, so that it emits one instruction
+  per plan and assigns each its own lane.
 - **Dropping native 2D/3D copies**, pending the CUDA backend comparison above.
 
 ## Testing note

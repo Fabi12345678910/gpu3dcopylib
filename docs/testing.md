@@ -69,7 +69,7 @@ failing assertion.
 | 7 | `manifest_strategy` | `tests/manifest_tests.cpp` | written |
 | 8 | Support: hashing and formatting | `tests/support_tests.cpp` | written |
 | 9 | Backend data correctness | | to do |
-| 10 | Ordering and dependency structure | | to do |
+| 10 | Ordering and concurrency | | to do |
 | 11 | Async handle semantics | | to do |
 | 12 | Executor and build | | partially covered by the CMake setup |
 
@@ -165,6 +165,9 @@ Needs SYCL. The oracle is a **host-side reference copy**, not an expected-value 
 kernel as in the 2D suite: in 3D that mapping is the thing under test, and duplicating it in the test risks reproducing
 the bug.
 
+The test harness configures SimSYCL's devices before the first device query, as the 2D executor did for itself
+(several identical GPUs). The library leaves the system configuration to its caller.
+
 Fill the target with a sentinel, copy, compare the whole buffer against the reference — that checks the copied bytes and
 that untouched bytes stayed untouched, which is the likely failure mode of chunk alignment rounding. Assert the source
 is unchanged. Forced cases: whole allocation, single row, window inside one row, windows crossing row and plane
@@ -172,23 +175,24 @@ boundaries, reshaping, one byte, odd row extents (alignment 1) and extents with 
 without `use_kernel` must produce identical bytes. Then the randomized version of all of it, with a fixed seed and an
 override for reproduction.
 
-### 10. Ordering and dependency structure
+### 10. Ordering and concurrency
 
-SimSYCL executes everything at submit time, so a copy set with **no dependency edges at all** still produces correct
-bytes and layer 9 gives no coverage here. See [async-execution.md](async-execution.md#eager-assignment).
+SimSYCL executes everything at submit time, so a plan whose steps are not ordered still produces correct bytes and
+layer 9 gives no coverage here. See [async-execution.md](async-execution.md#testing-note).
 
-The mechanism is a recording seam: an executor that logs `(lane, command, dependencies)` instead of submitting.
-Assertions on the recorded graph: every command of one call lands on the lane the call was given; the last command on
-the assigned lane transitively depends on the tail of every private lane; completion of the returned handle implies
-completion of every recorded command; no staging buffer is reused before the last command reading it completed; a flush
-is issued after submission. This is pure data, so it runs in CI.
-
-Worth building before the backend, because it decides whether the executor is observable at all.
+With worker threads, ordering within a plan comes from the worker waiting on each step. The mechanism is a recording
+seam: an executor that logs `(worker, queue, step, submit or wait)` instead of submitting. Assertions on the log: when
+a plan's next step goes to a different queue, it is submitted only after the worker waited on the previous step;
+workers wait on their own step's event, never on a whole queue; the handle completes only after every recorded step of
+its call; and, once the [staging lifetime](async-execution.md#open-questions) is decided, two calls in flight never
+share staging memory. This is pure data, so it runs in CI.
 
 ### 11. Async handle semantics
 
-`is_complete()` is monotonic, never blocks, and is safe to call repeatedly including before submission. Work proceeds
-without anyone polling. A forced failure invokes the injectable failure hook exactly once and no exception escapes.
+`is_complete()` is monotonic and never blocks. `wait()` returns once the copy is complete, also after a failure. Work
+proceeds without anyone polling or waiting. A forced failure is reported through `error()`, no exception escapes a
+worker, and the other plans of the set still complete. Dropping a handle neither blocks nor cancels the copy. Several
+calls can be in flight at once. `execution_time()` is empty until the handle completes.
 
 ## What CI can and cannot prove
 
