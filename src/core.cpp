@@ -1,6 +1,7 @@
 #include <copylib/core.hpp>
-
 #include <copylib/support.hpp> // IWYU pragma: keep
+
+#include <optional>
 
 // Skeleton: every function below returns a default-constructed value so that calling it is well-defined while the
 // implementation is missing. Without that, a non-void function falling off its end is undefined behaviour and the
@@ -144,11 +145,73 @@ parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& str
     return copy_set;
 }
 
-staging_id basic_staging_provider::operator()(device_id did, bool on_host, int64_t size) { return {}; }
+copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) {
+	
+    const auto proper_spec = spec.with_properties(strategy.properties);
+	
+    if(spec.source_device == device_id::host && spec.target_device == device_id::host) { return {proper_spec}; }
+    
+    if(strategy.type == copy_type::direct) { return {proper_spec}; }
+	if(strategy.type != copy_type::staged) {
+		COPYLIB_ERROR("Unknown copy strategy type: {}", strategy.type);
+		return {proper_spec};
+	}
 
-copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) { return {}; }
+	// if we are looking at a contiguous copy, we don't need to stage, but we need to normalize the layouts
+    if(spec.source_layout.is_window_contiguous() && spec.target_layout.is_window_contiguous()){
+        return {normalize(proper_spec)};
+    }
+	// if the source is not unit stride, we need to stage the source
+	std::optional<copy_spec> source_staging_copy;
+	if(!spec.source_layout.is_window_contiguous()) {
+		const auto device_id_for_staging =
+		    spec.source_device != device_id::host ? spec.source_device : (spec.target_device != device_id::host ? spec.target_device : device_id::d0);
+		const auto source_staging_buffer = staging_provider(device_id_for_staging, spec.source_device == device_id::host, spec.source_layout.window_length());
+        const data_layout staged_source_layout = data_layout(source_staging_buffer, 0, spec.source_layout.window_length());
+		source_staging_copy.emplace(spec.source_device, spec.source_layout, spec.source_device, staged_source_layout, strategy.properties);
+	}
 
-parallel_copy_set apply_staging(const parallel_copy_set& set, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) { return {}; }
+	// if the target is not unit stride, we need to unstage the target
+	std::optional<copy_spec> target_unstaging_copy;
+	if(!spec.target_layout.is_window_contiguous()) {
+		const auto device_id_for_staging =
+		    spec.target_device != device_id::host ? spec.target_device : (spec.source_device != device_id::host ? spec.source_device : device_id::d0);
+		const auto target_staging_buffer = staging_provider(device_id_for_staging, spec.target_device == device_id::host, spec.target_layout.window_length());
+		const data_layout staged_target_layout = data_layout(target_staging_buffer, 0, spec.target_layout.window_length());
+		target_unstaging_copy.emplace(spec.target_device, staged_target_layout, spec.target_device, spec.target_layout, strategy.properties);
+	}
+
+	// now we can build the copy plan
+	copy_plan plan;
+	if(source_staging_copy.has_value() && target_unstaging_copy.has_value()) {
+		const auto& src = source_staging_copy.value();
+		const auto& tgt = target_unstaging_copy.value();
+		plan.push_back(src);
+		plan.emplace_back(src.source_device, src.target_layout, tgt.target_device, tgt.source_layout, strategy.properties);
+		plan.push_back(tgt);
+	} else if(source_staging_copy.has_value()) {
+		const auto& src = source_staging_copy.value();
+		plan.push_back(src);
+		plan.emplace_back(src.target_device, src.target_layout, spec.target_device, spec.target_layout, strategy.properties);
+	} else if(target_unstaging_copy.has_value()) {
+		const auto& tgt = target_unstaging_copy.value();
+		plan.emplace_back(spec.source_device, spec.source_layout, tgt.source_device, tgt.source_layout, strategy.properties);
+		plan.push_back(tgt);
+	} else {
+        //TODO error
+        (void) 0;
+		//COPYLIB_ERROR("Something strange is afoot when staging: {}", spec);
+	}
+	return plan;
+}
+parallel_copy_set apply_staging(const parallel_copy_set& set, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) {
+    parallel_copy_set copies;
+	for(const auto& copy : set) {
+        //COPYLIB_ENSURE(copy.size() == 1, "Cannot stage a copy set with plans consisting of more than one copy (plan: {})", copy);
+		copies.push_back(apply_staging(copy.front(), strategy, staging_provider));
+	}
+	return copies;
+}
 
 copy_plan apply_d2d_implementation(const copy_plan& plan, const d2d_implementation d2d, const staging_buffer_provider& staging_provider) { return {}; }
 

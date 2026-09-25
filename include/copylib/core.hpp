@@ -1,7 +1,5 @@
 #pragma once
 
-#include "utils.hpp"
-
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -315,7 +313,9 @@ using staging_buffer_provider = std::function<staging_id(device_id, bool, int64_
 
 class basic_staging_provider {
   public:
-	staging_id operator()(device_id did, bool on_host, int64_t size);
+	staging_id operator()(device_id did, bool on_host, [[maybe_unused]] int64_t size){
+		return {on_host, did, next_staging_idx++};
+	}
 
   private:
 	uint32_t next_staging_idx = 0;

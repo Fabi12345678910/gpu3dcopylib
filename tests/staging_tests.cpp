@@ -35,7 +35,7 @@ using device_pair = std::pair<device_id, device_id>;
 
 } // namespace
 
-TEST_CASE("a direct strategy leaves the spec as it is", "[staging][!mayfail]") {
+TEST_CASE("a direct strategy leaves the spec as it is", "[staging]") {
 	std::vector<staging_request> log;
 	const auto spec = ref::spec();
 
@@ -46,7 +46,7 @@ TEST_CASE("a direct strategy leaves the spec as it is", "[staging][!mayfail]") {
 	CHECK(log.empty());
 }
 
-TEST_CASE("nothing is staged when both windows are contiguous", "[staging][!mayfail]") {
+TEST_CASE("nothing is staged when both windows are contiguous", "[staging]") {
 	const auto [src, tgt] = GENERATE(device_pair{device_id::d0, device_id::d1}, device_pair{device_id::host, device_id::d1}, device_pair{device_id::d0, device_id::host});
 	CAPTURE(src, tgt);
 
@@ -70,7 +70,7 @@ TEST_CASE("nothing is staged when both windows are contiguous", "[staging][!mayf
 	}
 }
 
-TEST_CASE("host-to-host copies are never staged", "[staging][!mayfail]") {
+TEST_CASE("host-to-host copies are never staged", "[staging]") {
 	// both sides strided, so everything but the host rule would stage them
 	std::vector<staging_request> log;
 	const auto spec = spec_from_fields(device_id::host, ref::fields(), device_id::host, shapes::six_rows_of_48(0x80000));
@@ -82,7 +82,7 @@ TEST_CASE("host-to-host copies are never staged", "[staging][!mayfail]") {
 	CHECK(log.empty());
 }
 
-TEST_CASE("a strided source is gathered on its own device", "[staging][!mayfail]") {
+TEST_CASE("a strided source is gathered on its own device", "[staging]") {
 	const auto [src, tgt] = GENERATE(device_pair{device_id::d0, device_id::d1}, device_pair{device_id::d0, device_id::host}, device_pair{device_id::host, device_id::d1});
 	CAPTURE(src, tgt);
 	std::vector<staging_request> log;
@@ -111,7 +111,7 @@ TEST_CASE("a strided source is gathered on its own device", "[staging][!mayfail]
 	CHECK(staging_is_consistent(plan));
 }
 
-TEST_CASE("a strided target is scattered on its own device", "[staging][!mayfail]") {
+TEST_CASE("a strided target is scattered on its own device", "[staging]") {
 	const auto [src, tgt] = GENERATE(device_pair{device_id::d0, device_id::d1}, device_pair{device_id::host, device_id::d1}, device_pair{device_id::d0, device_id::host});
 	CAPTURE(src, tgt);
 	std::vector<staging_request> log;
@@ -140,7 +140,7 @@ TEST_CASE("a strided target is scattered on its own device", "[staging][!mayfail
 	CHECK(staging_is_consistent(plan));
 }
 
-TEST_CASE("strided on both ends is gathered then crossed once contiguously then scattered", "[staging][!mayfail]") {
+TEST_CASE("strided on both ends is gathered then crossed once contiguously then scattered", "[staging]") {
 	const auto [src, tgt] = GENERATE(device_pair{device_id::d0, device_id::d1}, device_pair{device_id::host, device_id::d1}, device_pair{device_id::d0, device_id::host});
 	CAPTURE(src, tgt);
 	std::vector<staging_request> log;
@@ -172,7 +172,7 @@ TEST_CASE("strided on both ends is gathered then crossed once contiguously then 
 	CHECK(is_valid(plan));
 }
 
-TEST_CASE("the strategy's properties replace the spec's", "[staging][!mayfail]") {
+TEST_CASE("the strategy's properties replace the spec's", "[staging]") {
 	// on every path through apply_staging, including the ones that return the spec unstaged
 	const auto path = GENERATE(0, 1, 2, 3);
 	const bool strategy_sets_them = GENERATE(true, false);
@@ -194,7 +194,7 @@ TEST_CASE("the strategy's properties replace the spec's", "[staging][!mayfail]")
 	CHECK(all_steps_have(plan, strategy_properties));
 }
 
-TEST_CASE("a staged chunk gets a buffer holding exactly its window from offset 0", "[staging][window][!mayfail]") {
+TEST_CASE("a staged chunk gets a buffer holding exactly its window from offset 0", "[staging][window]") {
 	const auto [start, end] = GENERATE(std::pair<int64_t, int64_t>{96, 192}, std::pair<int64_t, int64_t>{3, 50});
 	CAPTURE(start, end);
 	const auto spec = spec_from_fields(
@@ -212,7 +212,7 @@ TEST_CASE("a staged chunk gets a buffer holding exactly its window from offset 0
 	CHECK(log.at(1).size == end - start);
 }
 
-TEST_CASE("a reshaping spec is staged on both ends", "[staging][!mayfail]") {
+TEST_CASE("a reshaping spec is staged on both ends", "[staging]") {
 	// 12 rows of 24 bytes into 6 rows of 48
 	std::vector<staging_request> log;
 	const auto spec = spec_from_fields(device_id::d0, ref::fields(), device_id::d1, shapes::six_rows_of_48(0x80000));
@@ -224,7 +224,7 @@ TEST_CASE("a reshaping spec is staged on both ends", "[staging][!mayfail]") {
 	CHECK(staging_is_consistent(plan));
 }
 
-TEST_CASE("a same-device copy is staged correctly", "[staging][!mayfail]") {
+TEST_CASE("a same-device copy is staged correctly", "[staging]") {
 	// Only correctness is pinned. Whether staging within one device is worth doing at all is still open, so the
 	// shape of this plan is deliberately left free.
 	std::vector<staging_request> log;
@@ -238,7 +238,7 @@ TEST_CASE("a same-device copy is staged correctly", "[staging][!mayfail]") {
 	CHECK(is_valid(plan));
 }
 
-TEST_CASE("the set overload stages every plan with its own buffers", "[staging][!mayfail]") {
+TEST_CASE("the set overload stages every plan with its own buffers", "[staging]") {
 	const auto spec = ref::spec();
 	const auto chunk = [&](int64_t start, int64_t end) {
 		return copy_plan{spec_from_fields(
@@ -259,7 +259,7 @@ TEST_CASE("the set overload stages every plan with its own buffers", "[staging][
 	CHECK(staging_is_consistent(staged_set));
 }
 
-TEST_CASE("the basic staging provider hands out a distinct id per request", "[staging][provider][!mayfail]") {
+TEST_CASE("the basic staging provider hands out a distinct id per request", "[staging][provider]") {
 	SECTION("called directly") {
 		basic_staging_provider provider;
 		const auto a = provider(device_id::d0, false, 128);
