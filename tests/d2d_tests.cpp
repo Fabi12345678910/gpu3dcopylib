@@ -40,7 +40,7 @@ copy_plan chunk(const copy_spec& spec, int64_t start, int64_t end) {
 
 } // namespace
 
-TEST_CASE("direct leaves every plan unchanged", "[d2d][!mayfail]") {
+TEST_CASE("direct leaves every plan unchanged", "[d2d]") {
 	const auto spec = ref::spec();
 	for(const auto& plan : {copy_plan{spec}, staged_plan(spec)}) {
 		std::vector<staging_request> log;
@@ -50,7 +50,7 @@ TEST_CASE("direct leaves every plan unchanged", "[d2d][!mayfail]") {
 	}
 }
 
-TEST_CASE("steps that are not between two devices are left alone", "[d2d][!mayfail]") {
+TEST_CASE("steps that are not between two devices are left alone", "[d2d]") {
 	const auto d2d = GENERATE(d2d_implementation::direct, d2d_implementation::host_staging_at_source, d2d_implementation::host_staging_at_target, d2d_implementation::host_staging_at_both);
 	CAPTURE(d2d);
 
@@ -65,7 +65,7 @@ TEST_CASE("steps that are not between two devices are left alone", "[d2d][!mayfa
 	}
 }
 
-TEST_CASE("host staging at one end splits a device-to-device copy in two", "[d2d][!mayfail]") {
+TEST_CASE("host staging at one end splits a device-to-device copy in two", "[d2d]") {
 	const auto d2d = GENERATE(d2d_implementation::host_staging_at_source, d2d_implementation::host_staging_at_target);
 	CAPTURE(d2d);
 	const auto spec = ref::spec(); // d0 -> d1, strided on both ends
@@ -91,7 +91,7 @@ TEST_CASE("host staging at one end splits a device-to-device copy in two", "[d2d
 	CHECK(staging_is_consistent(plan));
 }
 
-TEST_CASE("host staging at both ends adds exactly one host-to-host copy", "[d2d][!mayfail]") {
+TEST_CASE("host staging at both ends adds exactly one host-to-host copy", "[d2d]") {
 	const auto spec = ref::spec();
 	std::vector<staging_request> log;
 
@@ -118,7 +118,7 @@ TEST_CASE("host staging at both ends adds exactly one host-to-host copy", "[d2d]
 	CHECK(staging_is_consistent(plan));
 }
 
-TEST_CASE("staged plans only have their crossing rerouted", "[d2d][!mayfail]") {
+TEST_CASE("staged plans only have their crossing rerouted", "[d2d]") {
 	const auto spec = ref::spec();
 	const auto plan = staged_plan(spec);
 	const auto d2d = GENERATE(d2d_implementation::host_staging_at_source, d2d_implementation::host_staging_at_target, d2d_implementation::host_staging_at_both);
@@ -135,7 +135,7 @@ TEST_CASE("staged plans only have their crossing rerouted", "[d2d][!mayfail]") {
 	CHECK(staging_is_consistent(result));
 }
 
-TEST_CASE("after host staging no step goes directly between two devices", "[d2d][!mayfail]") {
+TEST_CASE("after host staging no step goes directly between two devices", "[d2d]") {
 	const auto d2d = GENERATE(d2d_implementation::host_staging_at_source, d2d_implementation::host_staging_at_target, d2d_implementation::host_staging_at_both);
 	CAPTURE(d2d);
 	const auto spec = ref::spec();
@@ -150,7 +150,7 @@ TEST_CASE("after host staging no step goes directly between two devices", "[d2d]
 	}
 }
 
-TEST_CASE("rerouted steps keep their properties", "[d2d][!mayfail]") {
+TEST_CASE("rerouted steps keep their properties", "[d2d]") {
 	const auto d2d = GENERATE(d2d_implementation::direct, d2d_implementation::host_staging_at_source, d2d_implementation::host_staging_at_target, d2d_implementation::host_staging_at_both);
 	const auto properties = GENERATE(copy_properties::none, copy_properties::use_kernel);
 	CAPTURE(d2d, properties);
@@ -162,7 +162,7 @@ TEST_CASE("rerouted steps keep their properties", "[d2d][!mayfail]") {
 	CHECK(all_steps_have(result, properties));
 }
 
-TEST_CASE("a chunk's host buffer holds only its window", "[d2d][window][!mayfail]") {
+TEST_CASE("a chunk's host buffer holds only its window", "[d2d][window]") {
 	const auto spec = ref::spec();
 	std::vector<staging_request> log;
 
@@ -174,7 +174,7 @@ TEST_CASE("a chunk's host buffer holds only its window", "[d2d][window][!mayfail
 	CHECK(log.at(0).size == 96);
 }
 
-TEST_CASE("the set overload reroutes every plan with its own buffers", "[d2d][!mayfail]") {
+TEST_CASE("the set overload reroutes every plan with its own buffers", "[d2d]") {
 	const auto spec = ref::spec();
 	const parallel_copy_set set{chunk(spec, 0, 96), chunk(spec, 96, 192), chunk(spec, 192, 288)};
 	std::vector<staging_request> log;

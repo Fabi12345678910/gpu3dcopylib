@@ -213,12 +213,61 @@ parallel_copy_set apply_staging(const parallel_copy_set& set, const copy_strateg
 	return copies;
 }
 
-copy_plan apply_d2d_implementation(const copy_plan& plan, const d2d_implementation d2d, const staging_buffer_provider& staging_provider) { return {}; }
-
-parallel_copy_set apply_d2d_implementation(const parallel_copy_set& set, const d2d_implementation d2d, const staging_buffer_provider& staging_provider) {
-	return {};
+copy_plan apply_d2d_implementation(const copy_plan& plan, const d2d_implementation d2d, const staging_buffer_provider& staging_provider) {
+	// TODO error handling: the 2D version started with COPYLIB_ENSURE(is_valid(plan), "Invalid copy plan, cannot apply d2d implementation: {}", plan);
+	if(d2d == d2d_implementation::direct) { return plan; }
+	// we need to change any copies that go from a device to another device
+	copy_plan new_plan;
+	for(const auto& spec : plan) {
+		if(spec.source_device == spec.target_device || spec.source_device == device_id::host || spec.target_device == device_id::host) {
+			new_plan.push_back(spec);
+		} else {
+			// host staging buffers are packed 1D and sized to the window, where the 2D version mirrored the source's fragment layout
+			switch(d2d) {
+			case d2d_implementation::host_staging_at_source: {
+				const auto staging_buffer = staging_provider(spec.source_device, true, spec.source_layout.window_length());
+				const data_layout staged_layout = {staging_buffer, 0, spec.source_layout.window_length()};
+				new_plan.emplace_back(spec.source_device, spec.source_layout, device_id::host, staged_layout, spec.properties);
+				new_plan.emplace_back(device_id::host, staged_layout, spec.target_device, spec.target_layout, spec.properties);
+				break;
+			}
+			case d2d_implementation::host_staging_at_target: {
+				const auto staging_buffer = staging_provider(spec.target_device, true, spec.source_layout.window_length());
+				const data_layout staged_layout = {staging_buffer, 0, spec.source_layout.window_length()};
+				new_plan.emplace_back(spec.source_device, spec.source_layout, device_id::host, staged_layout, spec.properties);
+				new_plan.emplace_back(device_id::host, staged_layout, spec.target_device, spec.target_layout, spec.properties);
+				break;
+			}
+			case d2d_implementation::host_staging_at_both: {
+				const auto source_staging_buffer = staging_provider(spec.source_device, true, spec.source_layout.window_length());
+				const data_layout staged_source_layout = {source_staging_buffer, 0, spec.source_layout.window_length()};
+				new_plan.emplace_back(spec.source_device, spec.source_layout, device_id::host, staged_source_layout, spec.properties);
+				const auto target_staging_buffer = staging_provider(spec.target_device, true, spec.target_layout.window_length());
+				const data_layout staged_target_layout = {target_staging_buffer, 0, spec.target_layout.window_length()};
+				new_plan.emplace_back(device_id::host, staged_source_layout, device_id::host, staged_target_layout, spec.properties);
+				new_plan.emplace_back(device_id::host, staged_target_layout, spec.target_device, spec.target_layout, spec.properties);
+				break;
+			}
+			default: COPYLIB_ERROR("Unknown d2d implementation: {}", d2d);
+			}
+		}
+	}
+	return new_plan;
 }
 
-parallel_copy_set manifest_strategy(const copy_spec& spec, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) { return {}; }
+parallel_copy_set apply_d2d_implementation(const parallel_copy_set& copy_set, const d2d_implementation d2d, const staging_buffer_provider& staging_provider) {
+	parallel_copy_set ret;
+	for(const auto& plan : copy_set) {
+		ret.push_back(apply_d2d_implementation(plan, d2d, staging_provider));
+	}
+	return ret;
+}
+
+parallel_copy_set manifest_strategy(const copy_spec& spec, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) {
+	const auto chunked_copies = apply_chunking(spec, strategy);
+	const auto staged_copies = apply_staging(chunked_copies, strategy, staging_provider);
+	const auto finalized_copies = apply_d2d_implementation(staged_copies, strategy.d2d, staging_provider);
+	return finalized_copies;
+}
 
 } // namespace copylib

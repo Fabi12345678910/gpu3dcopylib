@@ -188,7 +188,7 @@ copy_strategy random_strategy(std::mt19937_64& rng) {
 
 } // namespace
 
-TEST_CASE("manifest_strategy chains chunking then staging then the d2d implementation", "[manifest][!mayfail]") {
+TEST_CASE("manifest_strategy chains chunking then staging then the d2d implementation", "[manifest]") {
 	// design.md, "Pipeline recap"; two fresh providers hand out the same ids when called in the same order
 	const auto spec = ref::spec();
 	const auto strategy = strategy_from_fields(copy_type::staged, copy_properties::use_kernel, d2d_implementation::host_staging_at_both, 64);
@@ -204,7 +204,7 @@ TEST_CASE("manifest_strategy chains chunking then staging then the d2d implement
 	CHECK(same_set(manifested, chained));
 }
 
-TEST_CASE("every strategy on every named spec", "[manifest][!mayfail]") {
+TEST_CASE("every strategy on every named spec", "[manifest]") {
 	invariant_report report;
 	for(const auto& [name, spec] : named_specs()) {
 		for(const auto& strategy : all_strategies()) {
@@ -216,7 +216,7 @@ TEST_CASE("every strategy on every named spec", "[manifest][!mayfail]") {
 	report.report();
 }
 
-TEST_CASE("randomized specs and strategies", "[manifest][random][!mayfail]") {
+TEST_CASE("randomized specs and strategies", "[manifest][random]") {
 	// set COPYLIB_TEST_SEED to reproduce a reported case; cases are generated in sequence, so the index identifies it
 	const char* seed_override = std::getenv("COPYLIB_TEST_SEED");
 	const uint64_t seed = seed_override != nullptr ? std::strtoull(seed_override, nullptr, 10) : 20260922;
