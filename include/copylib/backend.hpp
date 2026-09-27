@@ -77,9 +77,10 @@ class executor {
   private:
 	friend copy_handle execute_copy(executor& exec, const parallel_copy_set& set);
 
-	mutable device_list devices; // Mutable due to ext_oneapi_can_access_peer not being const; very ugly
+	device_list devices;
 	std::vector<sycl::device> gpu_devices;
 	int64_t buffer_size;
+	bool peer_access_available = false; // enabled and checked once by the constructor
 	std::atomic<int64_t> staged_calls_in_flight = 0; // overlapping staged calls are warned about, see docs/async-execution.md
 
 	// declared last, so it is destroyed first: waits for the copies in flight while queues and staging memory still exist
@@ -89,6 +90,9 @@ class executor {
 int get_cpu_for_gpu_alloc(int gpu_idx, size_t total_gpu_count);
 
 namespace detail {
+
+	// alignment of the staging buffers and of every offset handed out in them
+	inline constexpr int64_t staging_alignment = 128;
 
 	void copy_with_kernel(sycl::queue& q, const copy_spec& spec, int32_t preferred_wg_size);
 
@@ -110,7 +114,6 @@ namespace detail {
 		executor& exec;
 		std::vector<int64_t> current_staging_offsets = std::vector<int64_t>(static_cast<int>(device_id::count), 0);
 		std::vector<int64_t> current_host_staging_offsets = std::vector<int64_t>(static_cast<int>(device_id::count), 0);
-		static constexpr int64_t staging_alignment = 128;
 
 		std::unordered_map<decltype(staging_id::index), staging_info> staging_buffers;
 	};

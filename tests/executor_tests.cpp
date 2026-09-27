@@ -15,7 +15,7 @@
 using namespace copylib;
 using namespace copylib_testing;
 
-TEST_CASE("an executor has in-order queues for every requested device and queue index", "[executor][!mayfail]") {
+TEST_CASE("an executor has in-order queues for every requested device and queue index", "[executor]") {
 	auto exec = make_executor(2, 3);
 
 	CHECK(exec.get_queues_per_device() == 3);
@@ -29,26 +29,26 @@ TEST_CASE("an executor has in-order queues for every requested device and queue 
 	CHECK(exec.get_queue(device_id::d0, 0) != exec.get_queue(device_id::d0, 1));
 }
 
-TEST_CASE("the executor's buffer size is its staging memory per device", "[executor][!mayfail]") {
+TEST_CASE("the executor's buffer size is its staging memory per device", "[executor]") {
 	const auto exec = make_executor(1, 1, 12345 * 64);
 	CHECK(exec.get_buffer_size() == 12345 * 64);
 }
 
-TEST_CASE("an executor cannot have more devices than exist", "[executor][error][!mayfail]") {
+TEST_CASE("an executor cannot have more devices than exist", "[executor][error]") {
 	configure_test_system();
 	// more devices than any machine running the tests, and more than device_id can name
 	CHECK_THROWS_AS(executor(test_staging_bytes, 64, 1), copylib::error);
 	CHECK_NOTHROW(executor(test_staging_bytes, 1, 1));
 }
 
-TEST_CASE("an executor needs at least one device and one queue per device", "[executor][error][!mayfail]") {
+TEST_CASE("an executor needs at least one device and one queue per device", "[executor][error]") {
 	configure_test_system();
 	CHECK_THROWS_AS(executor(test_staging_bytes, 0, 1), copylib::error);
 	CHECK_THROWS_AS(executor(test_staging_bytes, 1, 0), copylib::error);
 	CHECK_NOTHROW(executor(test_staging_bytes, 1, 1));
 }
 
-TEST_CASE("an executor describes itself", "[executor][!mayfail]") {
+TEST_CASE("an executor describes itself", "[executor]") {
 	const auto exec = make_executor();
 	CHECK_FALSE(exec.get_sycl_impl_name().empty());
 	CHECK_FALSE(exec.get_info().empty());
