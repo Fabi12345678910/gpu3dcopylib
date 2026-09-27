@@ -2,10 +2,6 @@
 
 #include <copylib/support.hpp> // IWYU pragma: keep - this is needed for formatting output, IWYU is dumb
 
-#ifdef SIMSYCL_VERSION
-#include <simsycl/system.hh>
-#endif
-
 #include <memory>
 #include <string>
 #include <thread>
@@ -36,7 +32,18 @@ void executor::barrier() {}
 
 executor::executor(int64_t buffer_size) : executor(buffer_size, sycl::device::get_devices(sycl::info::device_type::gpu).size(), 1) {}
 
-executor::executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_per_device) : buffer_size(buffer_size) {}
+namespace {
+
+	// checked before the pool is built from it, which would start a thread per hardware thread for 0
+	std::size_t checked_queues_per_device(int64_t queues_per_device) {
+		COPYLIB_ENSURE(queues_per_device > 0, "Need at least one queue per device");
+		return static_cast<std::size_t>(queues_per_device);
+	}
+
+} // namespace
+
+executor::executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_per_device)
+    : buffer_size(buffer_size), pool(checked_queues_per_device(queues_per_device)) {}
 
 device::device(sycl::device dev, const std::vector<sycl::queue>& queues) : dev(dev), queues(queues) {}
 
@@ -52,11 +59,7 @@ sycl::queue& executor::get_queue(const target& tgt) {
 	__builtin_unreachable();
 }
 
-std::byte* executor::get_buffer(device_id id) { return {}; }
-
 std::byte* executor::get_staging_buffer(device_id id) { return {}; }
-
-std::byte* executor::get_host_buffer(device_id id) { return {}; }
 
 std::byte* executor::get_host_staging_buffer(device_id id) { return {}; }
 
@@ -67,11 +70,9 @@ int64_t executor::get_queues_per_device() const { return {}; }
 template <typename CopyFun>
 void copy_via_repeated_1D_copies(CopyFun fun, const data_layout& source_layout, const data_layout& target_layout) {}
 
-executor::target execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx, bool alternate_device, const executor::target last_target) {
-	return {};
-}
-
 namespace detail {
+
+	step_result execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx, bool alternate_device, const step_result& last) { return {}; }
 
 	staging_fulfiller::staging_fulfiller(executor& exec) : exec(exec) {}
 
@@ -97,9 +98,9 @@ namespace {
 
 } // namespace
 
-void execute_copy(executor& exec, const copy_plan& plan) {}
-
 namespace detail {
+
+	void execute_copy(executor& exec, const copy_plan& plan) {}
 
 	struct copy_state {};
 

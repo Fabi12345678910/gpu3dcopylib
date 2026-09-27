@@ -123,7 +123,9 @@ COPYLIB_ENSURE(is_valid(copy_set), "Invalid copy set: {}", copy_set); // [option
 
 // === 4. Executing the copy set
 
-execute_copy(exec, copy_set);
+const auto handle = execute_copy(exec, copy_set); // returns immediately
+handle.wait(); // blocks until every plan has finished
+COPYLIB_ENSURE(!handle.error(), "Copy failed: {}", *handle.error());
 ```
 
 ## Benchmarks and Utilities

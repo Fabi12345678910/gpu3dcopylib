@@ -4,7 +4,11 @@
 
 #include <sycl/sycl.hpp>
 
+#include <bs_thread_pool/bs_thread_pool.hpp>
+
+#include <atomic>
 #include <chrono>
+#include <deque>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,17 +20,20 @@ namespace copylib {
 struct device {
 	sycl::device dev;
 	std::vector<sycl::queue> queues;
-	std::byte* dev_buffer = nullptr;
 	std::byte* staging_buffer = nullptr;
-	std::byte* host_buffer = nullptr;
 	std::byte* host_staging_buffer = nullptr;
 
 	device(sycl::device dev, const std::vector<sycl::queue>& queues);
+	device(const device&) = delete;
+	device& operator=(const device&) = delete;
 
 	~device();
 };
 
-using device_list = std::vector<device>;
+// a deque never relocates its elements, so a device and the buffers it frees exist exactly once
+using device_list = std::deque<device>;
+
+class copy_handle;
 
 class executor {
   public:
@@ -45,9 +52,7 @@ class executor {
 	sycl::queue& get_queue(device_id id, int64_t queue_idx = 0);
 	sycl::queue& get_queue(const target& tgt);
 
-	std::byte* get_buffer(device_id id);
 	std::byte* get_staging_buffer(device_id id);
-	std::byte* get_host_buffer(device_id id);
 	std::byte* get_host_staging_buffer(device_id id);
 
 	[[nodiscard]] int64_t get_buffer_size() const;
@@ -70,9 +75,15 @@ class executor {
 	void barrier();
 
   private:
+	friend copy_handle execute_copy(executor& exec, const parallel_copy_set& set);
+
 	mutable device_list devices; // Mutable due to ext_oneapi_can_access_peer not being const; very ugly
 	std::vector<sycl::device> gpu_devices;
 	int64_t buffer_size;
+	std::atomic<int64_t> staged_calls_in_flight = 0; // overlapping staged calls are warned about, see docs/async-execution.md
+
+	// declared last, so it is destroyed first: waits for the copies in flight while queues and staging memory still exist
+	BS::light_thread_pool pool;
 };
 
 int get_cpu_for_gpu_alloc(int gpu_idx, size_t total_gpu_count);
@@ -106,6 +117,17 @@ namespace detail {
 
 	struct copy_state; // shared by a handle and the workers running its plans
 
+	// where a step of a plan ran and the last command it submitted there, which the next step waits on when it runs
+	// elsewhere; the event of a host step is default-constructed and therefore complete
+	struct step_result {
+		executor::target target = executor::null_target;
+		sycl::event event;
+	};
+
+	step_result execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx = 0, bool alternate_device = false, const step_result& last = {});
+
+	void execute_copy(executor& exec, const copy_plan& plan);
+
 } // namespace detail
 
 // Completion state of one execute_copy call. Copies of a handle share the same state.
@@ -124,11 +146,6 @@ class copy_handle {
 
 	std::shared_ptr<detail::copy_state> state;
 };
-
-executor::target execute_copy(
-    executor& exec, const copy_spec& spec, int64_t queue_idx = 0, bool alternate_device = false, const executor::target last_target = executor::null_target);
-
-void execute_copy(executor& exec, const copy_plan& plan);
 
 // hands the plans of the set to the executor's thread pool and returns immediately
 [[nodiscard]] copy_handle execute_copy(executor& exec, const parallel_copy_set& set);
