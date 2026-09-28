@@ -194,8 +194,9 @@ executor::executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_p
 		~affinity_guard() { pthread_setaffinity_np(pthread_self(), sizeof(mask), &mask); }
 	} const restore_affinity{prior_mask};
 
-	// a whole number of alignments, which aligned allocations require on some implementations
-	const auto staging_bytes = static_cast<size_t>((buffer_size + detail::staging_alignment - 1) / detail::staging_alignment * detail::staging_alignment);
+	// a whole number of alignments, which aligned allocations require on some implementations; reported as the buffer size
+	this->buffer_size = (buffer_size + detail::staging_alignment - 1) / detail::staging_alignment * detail::staging_alignment;
+	const auto staging_bytes = static_cast<size_t>(this->buffer_size);
 
 	// allocate queues and staging buffers
 	int dev_id = 0;
@@ -282,9 +283,43 @@ namespace detail {
 
 	staging_fulfiller::staging_fulfiller(executor& exec) : exec(exec) {}
 
-	void staging_fulfiller::fulfill(data_layout& layout) {}
+	void staging_fulfiller::fulfill(data_layout& layout) {
+		if(!layout.is_unplaced_staging()) {return;}
+		const auto staging_idx = layout.staging.index;
+		auto staging_it = staging_buffers.find(staging_idx);
+		if(staging_it == staging_buffers.end()) {
+			const auto did = layout.staging.did;
+			const bool host = layout.staging.on_host;
+			COPYLIB_ENSURE(did != device_id::host, "Device id for staging cannot be host");
+			staging_info info{
+				.size = layout.window_length(),
+				.device = did,
+				.on_host = host,
+			};
+			if(host) {
+				info.buffer = exec.get_host_staging_buffer(did) + current_host_staging_offsets[static_cast<size_t>(did)];
+				current_host_staging_offsets[static_cast<size_t>(did)] += (info.size + staging_alignment - 1) / staging_alignment * staging_alignment;
+				COPYLIB_ENSURE(current_host_staging_offsets[static_cast<size_t>(did)] <= exec.get_buffer_size(),
+					"Staging buffer overflow on host for device {}", static_cast<int>(did));
+			} else {
+				info.buffer = exec.get_staging_buffer(did) + current_staging_offsets[static_cast<size_t>(did)];
+				current_staging_offsets[static_cast<size_t>(did)] += (info.size + staging_alignment - 1) / staging_alignment * staging_alignment;
+				COPYLIB_ENSURE(current_staging_offsets[static_cast<size_t>(did)] <= exec.get_buffer_size(), "Staging buffer overflow for device {}",
+					static_cast<int>(did));
+			}
+			staging_it = staging_buffers.emplace(staging_idx, info).first;
+		} else {
+			COPYLIB_ENSURE(staging_buffers[staging_idx].size == layout.window_length(), "Staging buffer size mismatch");
+			COPYLIB_ENSURE(staging_buffers[staging_idx].device == layout.staging.did, "Staging buffer device mismatch");
+			COPYLIB_ENSURE(staging_buffers[staging_idx].on_host == layout.staging.on_host, "Staging buffer host flag mismatch");
+		}
+		layout.base = reinterpret_cast<intptr_t>(staging_it->second.buffer);
+	}
 
-	void staging_fulfiller::fulfill(copy_spec& spec) {}
+	void staging_fulfiller::fulfill(copy_spec& spec) {
+		fulfill(spec.source_layout);
+		fulfill(spec.target_layout);
+	}
 
 } // namespace detail
 

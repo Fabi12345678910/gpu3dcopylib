@@ -30,8 +30,9 @@ TEST_CASE("an executor has in-order queues for every requested device and queue 
 }
 
 TEST_CASE("the executor's buffer size is its staging memory per device", "[executor]") {
+	// rounded up to a whole number of the 128-byte staging alignment
 	const auto exec = make_executor(1, 1, 12345 * 64);
-	CHECK(exec.get_buffer_size() == 12345 * 64);
+	CHECK(exec.get_buffer_size() == 12346 * 64);
 }
 
 TEST_CASE("an executor cannot have more devices than exist", "[executor][error]") {

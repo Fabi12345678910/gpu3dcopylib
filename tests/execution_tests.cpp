@@ -176,9 +176,9 @@ TEST_CASE("dropping the handle and destroying the executor still completes the c
 }
 
 TEST_CASE("a failing copy is reported, not lost", "[execution][handle][error][!mayfail]") {
-	// a natural failure: 288 bytes of staging do not fit into 64 bytes of staging memory
+	// a natural failure: 288 bytes of staging do not fit into 128 bytes of staging memory
 	configure_test_system();
-	executor exec(64, 2, 2);
+	executor exec(128, 2, 2);
 	const prepared_copy copy(exec, on_device(device_id::d0), ref::fields(), on_device(device_id::d1), ref::fields());
 
 	// depending on where the overflow is detected, it throws from the call or arrives through the handle
