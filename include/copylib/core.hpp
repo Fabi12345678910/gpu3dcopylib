@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -305,6 +306,40 @@ inline int64_t copy_alignment(const copy_spec& spec){
 	}
 	return alignment;
 };
+
+// Invokes f(source_offset, target_offset, length) for each run of bytes that is contiguous on both sides of the copy, in
+// packed order, with offsets relative to each side's allocation base. A run ends where a run of either side ends, so a
+// reshaping copy yields the pieces both sides share. This is the iteration primitive for copies made of 1D copies.
+// Both windows must have the same length, which is_valid(spec) checks.
+template <typename F>
+void for_each_copy_run(const copy_spec& spec, F&& f) {
+	const auto& source = spec.source_layout;
+	const auto& target = spec.target_layout;
+	const int64_t length = source.window_length();
+	const int64_t source_row = source.d0_end_offset - source.d0_start_offset;
+	const int64_t target_row = target.d0_end_offset - target.d0_start_offset;
+	int64_t run_source = 0;
+	int64_t run_target = 0;
+	int64_t run_length = 0;
+	//the idea here is to build up the run length until there is an actual gap in the data, at which point f is being called
+	for(int64_t i = 0; i < length;) {
+		const int64_t source_offset = source.offset_at(source.start + i);
+		const int64_t target_offset = target.offset_at(target.start + i);
+		// the rest of the rows both sides are in, clipped to the window
+		const int64_t take = std::min({source_row - (source.start + i) % source_row, target_row - (target.start + i) % target_row, length - i});
+		if(run_length != 0 && (source_offset != run_source + run_length || target_offset != run_target + run_length)) {
+			f(run_source, run_target, run_length);
+			run_length = 0;
+		}
+		if(run_length == 0) {
+			run_source = source_offset;
+			run_target = target_offset;
+		}
+		run_length += take;
+		i += take;
+	}
+	if(run_length != 0) { f(run_source, run_target, run_length); }
+}
 
 // apply chunking to the given copy spec if requested by the strategy
 parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& strategy);

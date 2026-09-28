@@ -274,9 +274,6 @@ int64_t executor::get_buffer_size() const { return buffer_size; }
 
 int64_t executor::get_queues_per_device() const { return devices.front().queues.size(); }
 
-template <typename CopyFun>
-void copy_via_repeated_1D_copies(CopyFun fun, const data_layout& source_layout, const data_layout& target_layout) {}
-
 namespace detail {
 
 	step_result execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx, bool alternate_device, const step_result& last) { return {}; }

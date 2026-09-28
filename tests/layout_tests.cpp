@@ -19,10 +19,14 @@
 
 using namespace copylib;
 using copylib_testing::shapes::full_rows_of_one_plane;
+using copylib_testing::shapes::one_row_of_six;
 using copylib_testing::shapes::single_row;
+using copylib_testing::shapes::six_rows_of_48;
+using copylib_testing::shapes::two_rows_of_three;
 using copylib_testing::shapes::whole_allocation;
 using copylib_testing::layout_from_fields;
 using copylib_testing::reference_offsets;
+using copylib_testing::spec_from_fields;
 using copylib_testing::with_window_fields;
 namespace ref = copylib_testing::reference_box;
 
@@ -37,6 +41,29 @@ std::vector<run> collect_runs(const data_layout& layout) {
 	std::vector<run> runs;
 	for_each_contiguous_run(layout, [&](int64_t offset, int64_t length) { runs.push_back({offset, length}); });
 	return runs;
+}
+
+struct copy_run {
+	int64_t source_offset;
+	int64_t target_offset;
+	int64_t length;
+};
+
+std::vector<copy_run> collect_copy_runs(const copy_spec& spec) {
+	std::vector<copy_run> runs;
+	for_each_copy_run(spec, [&](int64_t source_offset, int64_t target_offset, int64_t length) { runs.push_back({source_offset, target_offset, length}); });
+	return runs;
+}
+
+// same shape, strided to contiguous, strided reshape, contiguous reshape, and windows starting mid-row on both sides
+std::vector<copy_spec> copy_run_cases() {
+	return {
+	    ref::spec(),
+	    spec_from_fields(device_id::d0, ref::fields(), device_id::d1, copylib_testing::normal_form::one_run(0x80000, 0, ref::total_bytes)),
+	    spec_from_fields(device_id::d0, six_rows_of_48(0x10000), device_id::d1, ref::fields(0x80000)),
+	    spec_from_fields(device_id::d0, one_row_of_six(0x10000), device_id::d1, two_rows_of_three(0x80000)),
+	    spec_from_fields(device_id::d0, with_window_fields(ref::fields(), 7, 283), device_id::d1, with_window_fields(whole_allocation(0x80000), 100, 376)),
+	};
 }
 
 } // namespace
@@ -256,6 +283,43 @@ TEST_CASE("the runs of a window cover exactly the reference offsets", "[layout][
 		});
 		CHECK(copylib_testing::first_difference(covered, reference_offsets(layout)) == -1);
 	}
+}
+
+TEST_CASE("the copy runs pair every byte with its reference offset on both sides", "[layout][window]") {
+	for(const auto& spec : copy_run_cases()) {
+		CAPTURE(spec);
+		std::vector<int64_t> source_covered;
+		std::vector<int64_t> target_covered;
+		for(const auto& run : collect_copy_runs(spec)) {
+			CHECK(run.length > 0);
+			for(int64_t i = 0; i < run.length; ++i) {
+				source_covered.push_back(run.source_offset + i);
+				target_covered.push_back(run.target_offset + i);
+			}
+		}
+		CHECK(copylib_testing::first_difference(source_covered, reference_offsets(spec.source_layout)) == -1);
+		CHECK(copylib_testing::first_difference(target_covered, reference_offsets(spec.target_layout)) == -1);
+	}
+}
+
+TEST_CASE("consecutive copy runs are split only where a side is not contiguous", "[layout][window]") {
+	for(const auto& spec : copy_run_cases()) {
+		CAPTURE(spec);
+		const auto runs = collect_copy_runs(spec);
+		for(size_t r = 1; r < runs.size(); ++r) {
+			const auto& previous = runs[r - 1];
+			CHECK((previous.source_offset + previous.length != runs[r].source_offset || previous.target_offset + previous.length != runs[r].target_offset));
+		}
+	}
+}
+
+TEST_CASE("a copy has as many runs as its more fragmented side", "[layout][window]") {
+	// contiguous on both sides, across rows and planes
+	CHECK(collect_copy_runs(spec_from_fields(device_id::d0, whole_allocation(), device_id::d1, whole_allocation(0x80000))).size() == 1);
+	CHECK(collect_copy_runs(spec_from_fields(device_id::d0, one_row_of_six(0x10000), device_id::d1, two_rows_of_three(0x80000))).size() == 1);
+	// the reference box has 12 separate rows of 24 bytes, whatever the other side looks like
+	CHECK(collect_copy_runs(ref::spec()).size() == 12);
+	CHECK(collect_copy_runs(spec_from_fields(device_id::d0, six_rows_of_48(0x10000), device_id::d1, ref::fields(0x80000))).size() == 12);
 }
 
 TEST_CASE("the base pointer of a placed layout is its base address", "[layout]") {

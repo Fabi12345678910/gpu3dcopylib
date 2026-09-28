@@ -77,9 +77,9 @@ failing assertion.
 
 Pure, no SYCL, and mostly `constexpr`. Built on the `int[12,16,20]` example from [design.md](design.md#data-layout),
 which is available as `copylib_testing::reference_box`. Covers the box constructors, the window defaulting to the whole
-box, the 1D constructor producing exactly the 1D normal form, `total_bytes`, `end_offset`, `offset_at` and
-`for_each_contiguous_run` (each checked against the oracle for every byte), the contiguity predicates over the window,
-field-wise `operator==`, `base_ptr`, and `staging_id` round-tripping.
+box, the 1D constructor producing exactly the 1D normal form, `total_bytes`, `end_offset`, `offset_at`,
+`for_each_contiguous_run` and `for_each_copy_run` (each checked against the oracle for every byte), the contiguity
+predicates over the window, field-wise `operator==`, `base_ptr`, and `staging_id` round-tripping.
 
 ### 2. Validation
 
@@ -225,6 +225,8 @@ in the pipeline needed them — see step 2 of [design.md](design.md#upcoming-ste
   box is not. `d1_contigious()` and `d2_contigious()` ask whether the box fills whole rows or whole planes.
 - `for_each_contiguous_run(layout, f)`: the runs are ordered, non-overlapping, and their lengths sum to
   `window_length()`.
+- `for_each_copy_run(spec, f)`: pairs byte *i* of both windows, and splits a run only where one side stops being
+  contiguous, so a copy has as many runs as its more fragmented side.
 
 ## The 2D library as a reference
 
