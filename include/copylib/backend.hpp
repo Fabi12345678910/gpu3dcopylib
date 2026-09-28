@@ -94,7 +94,7 @@ namespace detail {
 	// alignment of the staging buffers and of every offset handed out in them
 	inline constexpr int64_t staging_alignment = 128;
 
-	void copy_with_kernel(sycl::queue& q, const copy_spec& spec, int32_t preferred_wg_size);
+	sycl::event copy_with_kernel(sycl::queue& q, const copy_spec& spec, int32_t preferred_wg_size);
 
 	class staging_fulfiller {
 	  public:
@@ -127,7 +127,7 @@ namespace detail {
 		sycl::event event;
 	};
 
-	step_result execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx = 0, bool alternate_device = false, const step_result& last = {});
+	step_result execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx = 0, bool alternate_device = false, step_result last = {});
 
 	void execute_copy(executor& exec, const copy_plan& plan);
 

@@ -13,6 +13,6 @@ void copy_with_kernel_impl(sycl::queue& q, const copy_spec& spec, IdxType prefer
 template <typename T>
 void copy_with_kernel_impl(sycl::queue& q, const copy_spec& spec, int32_t preferred_wg_size) {}
 
-void copy_with_kernel(sycl::queue& q, const copy_spec& spec, int32_t preferred_wg_size) {}
+sycl::event copy_with_kernel(sycl::queue& q, const copy_spec& spec, int32_t preferred_wg_size) { return {}; }
 
 } // namespace copylib::detail

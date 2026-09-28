@@ -276,7 +276,58 @@ int64_t executor::get_queues_per_device() const { return devices.front().queues.
 
 namespace detail {
 
-	step_result execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx, bool alternate_device, const step_result& last) { return {}; }
+	step_result execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx, bool alternate_device, step_result last) {
+		constexpr bool debug = false;
+		const executor::target last_target = last.target;
+		const device_id last_device = last_target.did;
+		if(debug) utils::err_print("{}:\n  -> last_device is {}\n", spec, last_device);
+
+		const auto& source = spec.source_layout;
+		const auto& target_layout = spec.target_layout;
+
+		//  for host <-> host copies, use memcpy
+		if(spec.source_device == device_id::host && spec.target_device == device_id::host) {
+			if(debug) utils::err_print("  -> h2h\n");
+			if(last_device != device_id::host && last_device != device_id::count) {
+				if(debug) utils::err_print("  -> waiting on {}\n", last_device);
+				last.event.wait_and_throw();
+			}
+			for_each_copy_run(spec, [&](int64_t source_offset, int64_t target_offset, int64_t length) {
+				std::memcpy(target_layout.base_ptr() + target_offset, source.base_ptr() + source_offset, length);
+			});
+			return {{device_id::host, 0}, {}};
+		}
+
+		const device_id desired_device = alternate_device ? spec.target_device : spec.source_device;
+		const device_id fallback_device = alternate_device ? spec.source_device : spec.target_device;
+		const device_id device_to_use = desired_device == device_id::host ? fallback_device : desired_device;
+		const executor::target target{device_to_use, queue_idx};
+
+		if(debug) utils::err_print("  -> performing copy on queue for device {}\n", device_to_use);
+		if(last_target != target && last_device != device_id::count && last_device != device_id::host) {
+			if(debug) utils::err_print("  -> waiting on {}\n", last_device);
+			last.event.wait_and_throw();
+		}
+
+		auto& queue = exec.get_queue(target);
+
+		// if the source and target are contiguous, we can use a single copy operation
+		if(source.is_window_contiguous() && target_layout.is_window_contiguous()) {
+			return {target, queue.copy(source.base_ptr() + source.offset_at(source.start), target_layout.base_ptr() + target_layout.offset_at(target_layout.start),
+			                    source.window_length())};
+		}
+
+		// technically, one could use a kernel for copies involving the host on some hw/sw stacks, but we'll ignore that for now
+		if(spec.properties & copy_properties::use_kernel && spec.source_device != device_id::host && spec.target_device != device_id::host) {
+			return {target, copy_with_kernel(queue, spec, exec.get_preferred_wg_size())};
+		}
+		// the queue is in order, so the last copy completes after all the others
+		sycl::event last_copy;
+		for_each_copy_run(spec, [&](int64_t source_offset, int64_t target_offset, int64_t length) {
+			last_copy = queue.copy(source.base_ptr() + source_offset, target_layout.base_ptr() + target_offset, length);
+		});
+		return {target, last_copy};
+	}
 
 	staging_fulfiller::staging_fulfiller(executor& exec) : exec(exec) {}
 
