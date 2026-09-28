@@ -368,7 +368,7 @@ copy_plan apply_d2d_implementation(const copy_plan& plan, const d2d_implementati
 // apply the desired d2d implementation to the given parallel copy set (by applying it to each copy plan)
 parallel_copy_set apply_d2d_implementation(const parallel_copy_set& set, const d2d_implementation d2d, const staging_buffer_provider& staging_provider);
 
-// manifests the copy strategy on the given copy spec, applying chunking and staging as necessary
+// manifests the copy strategy on the normalized copy spec, applying chunking and staging as necessary
 parallel_copy_set manifest_strategy(const copy_spec& spec, const copy_strategy& strategy, const staging_buffer_provider& staging_provider);
 
 } // namespace copylib

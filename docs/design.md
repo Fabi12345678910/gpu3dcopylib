@@ -96,10 +96,11 @@ The following go away: `use_2D_copy`, `use_3D_copy`, `is_2d_copy_available()`, `
 
 ## Pipeline recap
 
-`manifest_strategy` = `apply_chunking` -> `apply_staging` -> `apply_d2d_implementation`
+`manifest_strategy` = `normalize` -> `apply_chunking` -> `apply_staging` -> `apply_d2d_implementation`
 
 | Step | Input | Output |
 | --- | --- | --- |
+| `normalize` | the caller's spec | the same copy with both sides in their normal form, so that the later steps see the highest `copy_alignment` and the fewest runs. |
 | `apply_chunking` | one spec | `parallel_copy_set` of independent single-spec plans, each at most `chunk_size` bytes. `chunk_size == 0` means no chunking. |
 | `apply_staging` | each single-spec plan | a sequential plan: `[gather, staging -> staging, scatter]`, or a subset of it. A side is staged exactly when its window is not one contiguous run; host-to-host copies are never staged. Only the middle copy crosses devices, and it is always contiguous. The strategy's properties replace the spec's. |
 | `apply_d2d_implementation` | each plan | device-to-device copies optionally routed through host staging buffers |

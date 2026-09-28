@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-// Layer 7: manifest_strategy() = apply_chunking -> apply_staging -> apply_d2d_implementation.
+// Layer 7: manifest_strategy() = normalize -> apply_chunking -> apply_staging -> apply_d2d_implementation.
 //
 // Every combination of copy type, properties, d2d implementation and chunk size runs on a set of named specs, then on
 // randomly generated ones, and each result is checked against the oracle and the pipeline's invariants. Failures are
@@ -188,7 +188,7 @@ copy_strategy random_strategy(std::mt19937_64& rng) {
 
 } // namespace
 
-TEST_CASE("manifest_strategy chains chunking then staging then the d2d implementation", "[manifest]") {
+TEST_CASE("manifest_strategy chains normalization, chunking, staging and the d2d implementation", "[manifest]") {
 	// design.md, "Pipeline recap"; two fresh providers hand out the same ids when called in the same order
 	const auto spec = ref::spec();
 	const auto strategy = strategy_from_fields(copy_type::staged, copy_properties::use_kernel, d2d_implementation::host_staging_at_both, 64);
@@ -197,11 +197,27 @@ TEST_CASE("manifest_strategy chains chunking then staging then the d2d implement
 	const auto chain_provider = recording_provider(chain_log);
 
 	const auto manifested = manifest_strategy(spec, strategy, recording_provider(manifest_log));
-	const auto chained = apply_d2d_implementation(apply_staging(apply_chunking(spec, strategy), strategy, chain_provider), strategy.d2d, chain_provider);
+	const auto chained =
+	    apply_d2d_implementation(apply_staging(apply_chunking(normalize(spec), strategy), strategy, chain_provider), strategy.d2d, chain_provider);
 
 	// without this, two placeholders returning an empty set would compare equal
 	REQUIRE_FALSE(manifested.empty());
 	CHECK(same_set(manifested, chained));
+}
+
+TEST_CASE("manifest_strategy normalizes the spec before chunking", "[manifest]") {
+	// 192 adjacent rows of 80 bytes are one contiguous run, so a direct copy of them is planned as a single 1D run
+	constexpr int64_t length = 12 * ref::plane_bytes;
+	const auto spec = spec_from_fields(device_id::d0, shapes::whole_allocation(), device_id::d1, shapes::whole_allocation(0x80000));
+	const auto strategy = strategy_from_fields(copy_type::direct, copy_properties::none, d2d_implementation::direct, 0);
+	std::vector<staging_request> log;
+
+	const auto set = manifest_strategy(spec, strategy, recording_provider(log));
+
+	REQUIRE(set.size() == 1);
+	REQUIRE(set.front().size() == 1);
+	CHECK(same_fields(set.front().front().source_layout, normal_form::one_run(ref::base, 0, length)));
+	CHECK(same_fields(set.front().front().target_layout, normal_form::one_run(0x80000, 0, length)));
 }
 
 TEST_CASE("every strategy on every named spec", "[manifest]") {

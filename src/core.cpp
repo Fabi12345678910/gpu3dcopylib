@@ -264,7 +264,8 @@ parallel_copy_set apply_d2d_implementation(const parallel_copy_set& copy_set, co
 }
 
 parallel_copy_set manifest_strategy(const copy_spec& spec, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) {
-	const auto chunked_copies = apply_chunking(spec, strategy);
+	const auto normalized_spec = normalize(spec);
+	const auto chunked_copies = apply_chunking(normalized_spec, strategy);
 	const auto staged_copies = apply_staging(chunked_copies, strategy, staging_provider);
 	const auto finalized_copies = apply_d2d_implementation(staged_copies, strategy.d2d, staging_provider);
 	return finalized_copies;
