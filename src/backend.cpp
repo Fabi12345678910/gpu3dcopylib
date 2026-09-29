@@ -383,13 +383,24 @@ namespace {
 		{ f.fulfill(c) };
 	};
 
-	void execute_plan_impl(executor& exec, const copy_plan& plan, StagingFulfiller auto& fulfiller, int64_t queue_idx, bool alternate_device) {}
+	void execute_plan_impl(executor& exec, const copy_plan& plan, StagingFulfiller auto& fulfiller, int64_t queue_idx, bool alternate_device) {
+		detail::step_result last;
+		for(auto spec : plan) {
+			fulfiller.fulfill(spec);
+			last = detail::execute_copy(exec, spec, queue_idx, alternate_device, last);
+		}
+		// the plan is done only once its last step is; earlier steps are covered by the waits between steps and queue order
+		last.event.wait_and_throw();
+	}
 
 } // namespace
 
 namespace detail {
 
-	void execute_copy(executor& exec, const copy_plan& plan) {}
+	void execute_copy(executor& exec, const copy_plan& plan) {
+		staging_fulfiller fulfiller(exec);
+		execute_plan_impl(exec, plan, fulfiller, 0, false);
+	}
 
 	struct copy_state {};
 
