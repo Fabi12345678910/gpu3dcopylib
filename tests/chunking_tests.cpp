@@ -247,7 +247,7 @@ TEST_CASE("the alignment accounts for every term on both sides", "[chunking][ali
 	}
 }
 
-TEST_CASE("chunking rejects an invalid spec", "[chunking][error][!mayfail]") {
+TEST_CASE("chunking rejects an invalid spec", "[chunking][error]") {
 	auto invalid = ref::spec();
 	invalid.target_layout.end -= 8; // window lengths differ
 	REQUIRE_FALSE(is_valid(invalid));

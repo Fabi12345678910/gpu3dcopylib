@@ -80,54 +80,54 @@ data_layout reference_window(int64_t start, int64_t end) { return with_window_fi
 // ---------------------------------------------------------------------------------------------------------------------
 // Forced cases
 
-TEST_CASE("the reference box is copied into the same box of another allocation", "[backend][!mayfail]") {
+TEST_CASE("the reference box is copied into the same box of another allocation", "[backend]") {
 	check_all(ref::fields(), ref::fields());
 }
 
-TEST_CASE("a whole allocation is copied as one run", "[backend][!mayfail]") {
+TEST_CASE("a whole allocation is copied as one run", "[backend]") {
 	check_all(shapes::whole_allocation(), shapes::whole_allocation());
 }
 
-TEST_CASE("a single partial row is copied", "[backend][!mayfail]") {
+TEST_CASE("a single partial row is copied", "[backend]") {
 	check_all(shapes::single_row(), shapes::single_row());
 }
 
-TEST_CASE("a window inside one row is copied", "[backend][window][!mayfail]") {
+TEST_CASE("a window inside one row is copied", "[backend][window]") {
 	check_all(reference_window(2, 10), reference_window(2, 10));
 }
 
-TEST_CASE("a window crossing row and plane boundaries is copied", "[backend][window][!mayfail]") {
+TEST_CASE("a window crossing row and plane boundaries is copied", "[backend][window]") {
 	// a plane of the box holds 96 bytes, so [12, 200) starts mid-row and ends in the third plane
 	check_all(reference_window(12, 200), reference_window(12, 200));
 }
 
-TEST_CASE("a single byte is copied", "[backend][window][!mayfail]") {
+TEST_CASE("a single byte is copied", "[backend][window]") {
 	check_all(reference_window(5, 6), reference_window(5, 6));
 }
 
-TEST_CASE("windows at different offsets of either side are copied", "[backend][window][!mayfail]") {
+TEST_CASE("windows at different offsets of either side are copied", "[backend][window]") {
 	// shifted by 8 bytes, which limits the alignment to 8
 	check_all(reference_window(0, 280), reference_window(8, 288));
 }
 
-TEST_CASE("a reshaping copy is copied", "[backend][!mayfail]") {
+TEST_CASE("a reshaping copy is copied", "[backend]") {
 	// rows of 24 bytes into rows of 48
 	check_all(ref::fields(), shapes::six_rows_of_48(0));
 }
 
-TEST_CASE("a strided box is copied from and into a contiguous run", "[backend][!mayfail]") {
+TEST_CASE("a strided box is copied from and into a contiguous run", "[backend]") {
 	check_all(ref::fields(), normal_form::one_run(0, 0, ref::total_bytes));
 	check_all(normal_form::one_run(0, 0, ref::total_bytes), ref::fields());
 }
 
-TEST_CASE("odd row extents are copied byte by byte", "[backend][alignment][!mayfail]") {
+TEST_CASE("odd row extents are copied byte by byte", "[backend][alignment]") {
 	// 9-byte rows 13 bytes apart: alignment 1
 	const auto odd = layout_from_fields(0, 13, 6, 0, 0, 0, 9, 5, 2, 0, 9 * 5 * 2);
 	REQUIRE(copy_alignment(spec_from_fields(device_id::d0, odd, device_id::d1, odd)) == 1);
 	check_all(odd, odd);
 }
 
-TEST_CASE("rows aligned to 64 bytes are copied", "[backend][alignment][!mayfail]") {
+TEST_CASE("rows aligned to 64 bytes are copied", "[backend][alignment]") {
 	// 128-byte rows starting at byte 64 of 256-byte rows: alignment 64, the widest element the kernels use
 	const auto wide = layout_from_fields(0, 256, 4, 64, 0, 0, 192, 4, 2, 0, 128 * 4 * 2);
 	REQUIRE(copy_alignment(spec_from_fields(device_id::d0, wide, device_id::d1, wide)) == 64);
@@ -179,7 +179,7 @@ std::pair<data_layout, data_layout> random_layouts(std::mt19937_64& rng) {
 
 } // namespace
 
-TEST_CASE("randomized layouts, windows, ends and strategies", "[backend][random][!mayfail]") {
+TEST_CASE("randomized layouts, windows, ends and strategies", "[backend][random]") {
 	// set COPYLIB_TEST_SEED to reproduce a reported case; cases are generated in sequence, so the index identifies it
 	const char* seed_override = std::getenv("COPYLIB_TEST_SEED");
 	const uint64_t seed = seed_override != nullptr ? std::strtoull(seed_override, nullptr, 10) : 20260925;

@@ -3,10 +3,6 @@
 
 #include <optional>
 
-// Skeleton: every function below returns a default-constructed value so that calling it is well-defined while the
-// implementation is missing. Without that, a non-void function falling off its end is undefined behaviour and the
-// test binary crashes instead of reporting failing assertions. Replace the placeholder as each function is written.
-
 namespace copylib {
 
 bool is_valid(const data_layout& layout) {
@@ -118,6 +114,7 @@ copy_spec normalize(const copy_spec& spec) {
 }
 
 parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& strategy) {
+	COPYLIB_ENSURE(is_valid(spec), "Invalid copy specification, cannot chunk: {}", spec);
     if (strategy.chunk_size == 0) {return {{spec}};};
     parallel_copy_set copy_set;
 
@@ -146,7 +143,7 @@ parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& str
 }
 
 copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) {
-	
+	COPYLIB_ENSURE(is_valid(spec), "Invalid copy specification, cannot stage: {}", spec);
     const auto proper_spec = spec.with_properties(strategy.properties);
 	
     if(spec.source_device == device_id::host && spec.target_device == device_id::host) { return {proper_spec}; }
@@ -198,23 +195,21 @@ copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, co
 		plan.emplace_back(spec.source_device, spec.source_layout, tgt.source_device, tgt.source_layout, strategy.properties);
 		plan.push_back(tgt);
 	} else {
-        //TODO error
-        (void) 0;
-		//COPYLIB_ERROR("Something strange is afoot when staging: {}", spec);
+		COPYLIB_ERROR("Something strange is afoot when staging: {}", spec);
 	}
 	return plan;
 }
 parallel_copy_set apply_staging(const parallel_copy_set& set, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) {
     parallel_copy_set copies;
 	for(const auto& copy : set) {
-        //COPYLIB_ENSURE(copy.size() == 1, "Cannot stage a copy set with plans consisting of more than one copy (plan: {})", copy);
+		COPYLIB_ENSURE(copy.size() == 1, "Cannot stage a copy set with plans consisting of more than one copy (plan: {})", copy);
 		copies.push_back(apply_staging(copy.front(), strategy, staging_provider));
 	}
 	return copies;
 }
 
 copy_plan apply_d2d_implementation(const copy_plan& plan, const d2d_implementation d2d, const staging_buffer_provider& staging_provider) {
-	// TODO error handling: the 2D version started with COPYLIB_ENSURE(is_valid(plan), "Invalid copy plan, cannot apply d2d implementation: {}", plan);
+	COPYLIB_ENSURE(is_valid(plan), "Invalid copy plan, cannot apply d2d implementation: {}", plan);
 	if(d2d == d2d_implementation::direct) { return plan; }
 	// we need to change any copies that go from a device to another device
 	copy_plan new_plan;
@@ -264,6 +259,8 @@ parallel_copy_set apply_d2d_implementation(const parallel_copy_set& copy_set, co
 }
 
 parallel_copy_set manifest_strategy(const copy_spec& spec, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) {
+	// checked before normalizing, which assumes a valid spec
+	COPYLIB_ENSURE(is_valid(spec), "Invalid copy specification, cannot manifest: {}", spec);
 	const auto normalized_spec = normalize(spec);
 	const auto chunked_copies = apply_chunking(normalized_spec, strategy);
 	const auto staged_copies = apply_staging(chunked_copies, strategy, staging_provider);

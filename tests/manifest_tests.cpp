@@ -250,7 +250,7 @@ TEST_CASE("randomized specs and strategies", "[manifest][random]") {
 	report.report();
 }
 
-TEST_CASE("manifest_strategy rejects an invalid spec", "[manifest][error][!mayfail]") {
+TEST_CASE("manifest_strategy rejects an invalid spec", "[manifest][error]") {
 	auto invalid = ref::spec();
 	invalid.target_layout.end -= 8; // window lengths differ
 	REQUIRE_FALSE(is_valid(invalid));

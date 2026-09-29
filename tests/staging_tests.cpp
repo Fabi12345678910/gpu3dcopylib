@@ -282,7 +282,7 @@ TEST_CASE("the basic staging provider hands out a distinct id per request", "[st
 	}
 }
 
-TEST_CASE("staging rejects an invalid spec", "[staging][error][!mayfail]") {
+TEST_CASE("staging rejects an invalid spec", "[staging][error]") {
 	auto invalid = ref::spec();
 	invalid.target_layout.end -= 8; // window lengths differ
 	REQUIRE_FALSE(is_valid(invalid));

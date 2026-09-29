@@ -43,7 +43,7 @@ data_layout large_run() { return normal_form::one_run(0, 0, int64_t{8} << 20); }
 // ---------------------------------------------------------------------------------------------------------------------
 // Layer 10: calls in flight
 
-TEST_CASE("several calls in flight each produce correct bytes", "[execution][concurrency][!mayfail]") {
+TEST_CASE("several calls in flight each produce correct bytes", "[execution][concurrency]") {
 	auto exec = make_executor();
 	const std::vector<std::pair<location, location>> ends = {
 	    {on_device(device_id::d0), on_device(device_id::d1)},
@@ -73,7 +73,7 @@ TEST_CASE("several calls in flight each produce correct bytes", "[execution][con
 // ---------------------------------------------------------------------------------------------------------------------
 // Layer 11: the handle
 
-TEST_CASE("once wait returns, the handle reports a completed copy", "[execution][handle][!mayfail]") {
+TEST_CASE("once wait returns, the handle reports a completed copy", "[execution][handle]") {
 	auto exec = make_executor();
 	const prepared_copy copy(exec, on_device(device_id::d0), ref::fields(), on_device(device_id::d1), ref::fields());
 
@@ -88,7 +88,7 @@ TEST_CASE("once wait returns, the handle reports a completed copy", "[execution]
 	CHECK(outcome.correct());
 }
 
-TEST_CASE("is_complete never goes back from true to false", "[execution][handle][!mayfail]") {
+TEST_CASE("is_complete never goes back from true to false", "[execution][handle]") {
 	auto exec = make_executor();
 	const prepared_copy copy(exec, on_device(device_id::d0), large_run(), on_device(device_id::d1), large_run());
 
@@ -110,7 +110,7 @@ TEST_CASE("is_complete never goes back from true to false", "[execution][handle]
 	CHECK(copy.verify(handle.error()).correct());
 }
 
-TEST_CASE("is_complete returns immediately while a copy runs", "[execution][handle][!mayfail]") {
+TEST_CASE("is_complete returns immediately while a copy runs", "[execution][handle]") {
 	// a generous bound: is_complete is a single atomic load, so anything close to this means it waited on the copy
 	constexpr auto bound = std::chrono::milliseconds(50);
 	auto exec = make_executor();
@@ -130,7 +130,7 @@ TEST_CASE("is_complete returns immediately while a copy runs", "[execution][hand
 	CHECK(copy.verify(handle.error()).correct());
 }
 
-TEST_CASE("copies of a handle share one state", "[execution][handle][!mayfail]") {
+TEST_CASE("copies of a handle share one state", "[execution][handle]") {
 	auto exec = make_executor();
 	const prepared_copy copy(exec, pinned_host, ref::fields(), on_device(device_id::d0), ref::fields());
 
@@ -143,7 +143,7 @@ TEST_CASE("copies of a handle share one state", "[execution][handle][!mayfail]")
 	CHECK(duplicate.execution_time().has_value());
 }
 
-TEST_CASE("handles can be waited on in any order", "[execution][handle][!mayfail]") {
+TEST_CASE("handles can be waited on in any order", "[execution][handle]") {
 	auto exec = make_executor();
 	std::vector<std::unique_ptr<prepared_copy>> copies;
 	std::vector<copy_handle> handles;
@@ -161,7 +161,7 @@ TEST_CASE("handles can be waited on in any order", "[execution][handle][!mayfail
 	report.check();
 }
 
-TEST_CASE("dropping the handle and destroying the executor still completes the copy", "[execution][handle][!mayfail]") {
+TEST_CASE("dropping the handle and destroying the executor still completes the copy", "[execution][handle]") {
 	// pageable host memory on both ends, the only memory that stays usable after the executor and its queues are gone
 	configure_test_system();
 	auto exec = std::make_unique<executor>(test_staging_bytes, 2, 2);
@@ -175,7 +175,7 @@ TEST_CASE("dropping the handle and destroying the executor still completes the c
 	CHECK(outcome.correct());
 }
 
-TEST_CASE("a failing copy is reported, not lost", "[execution][handle][error][!mayfail]") {
+TEST_CASE("a failing copy is reported, not lost", "[execution][handle][error]") {
 	// a natural failure: 288 bytes of staging do not fit into 128 bytes of staging memory
 	configure_test_system();
 	executor exec(128, 2, 2);
@@ -193,7 +193,7 @@ TEST_CASE("a failing copy is reported, not lost", "[execution][handle][error][!m
 	CHECK(reported);
 }
 
-TEST_CASE("execute_copy rejects an invalid set", "[execution][error][!mayfail]") {
+TEST_CASE("execute_copy rejects an invalid set", "[execution][error]") {
 	// window lengths differ, but every window stays inside its allocation, so a missing check cannot corrupt memory
 	auto exec = make_executor();
 	const prepared_copy copy(exec, on_device(device_id::d0), ref::fields(), on_device(device_id::d1), ref::fields());

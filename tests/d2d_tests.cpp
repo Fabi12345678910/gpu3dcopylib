@@ -187,7 +187,7 @@ TEST_CASE("the set overload reroutes every plan with its own buffers", "[d2d]") 
 	CHECK(staging_is_consistent(result));
 }
 
-TEST_CASE("the d2d implementation rejects an invalid plan", "[d2d][error][!mayfail]") {
+TEST_CASE("the d2d implementation rejects an invalid plan", "[d2d][error]") {
 	auto invalid = ref::spec();
 	invalid.target_layout.end -= 8; // window lengths differ
 	REQUIRE_FALSE(is_valid(invalid));
