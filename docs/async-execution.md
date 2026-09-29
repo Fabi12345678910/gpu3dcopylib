@@ -243,7 +243,7 @@ particular, [consequence 3](#3-take-device-and-lane-as-parameters) makes caller-
 | Thread pool | `BS::thread_pool`, as in the 2D library, but owned by the executor rather than a function-local `static`. It still has to be added as a dependency. |
 | Queues | The executor creates and owns its in-order queues, as in the 2D library. |
 | Staging lifetime | Open. Until it is settled, staged calls are not blocked: overlapping ones are undefined behaviour, and the executor warns when a staged call starts while another is in flight. |
-| Error handling | Every failure throws `copylib::error`: invalid input, broken internal invariants and resource failures alike, so `COPYLIB_ENSURE` throws instead of calling `std::exit`. A failure inside a worker cannot reach the caller as an exception and is reported as a message through `copy_handle::error()` instead. |
+| Error handling | Every failure throws `copylib::error`: invalid input, broken internal invariants and resource failures alike, so `COPYLIB_ENSURE` throws instead of calling `std::exit`. A failure inside a worker cannot reach the caller as an exception and is reported as a message through `copy_handle::error()` instead. The executor's queues get an async handler that rethrows, so that asynchronous SYCL errors reach that report instead of the default handler, which terminates. |
 
 Compared with the analysis above, this leaves out three things for now, all motivated by Celerity: polling events
 (option B) for the parts that need no runtime decisions, taking the caller's queues, and the injectable failure handler
@@ -252,7 +252,7 @@ panics instead. Keeping queue selection behind one function in the executor leav
 
 ## Proposed interface
 
-A starting point for the backend, not implemented yet.
+Implemented in `src/backend.cpp` as proposed here.
 
 ```cpp
 namespace copylib {

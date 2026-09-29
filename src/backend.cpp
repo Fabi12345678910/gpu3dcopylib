@@ -3,17 +3,20 @@
 #include <copylib/support.hpp> // IWYU pragma: keep - this is needed for formatting output, IWYU is dumb
 
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
 
 #include <pthread.h>
-
-// Skeleton: every function below returns a default-constructed value so that calling it is well-defined while the
-// implementation is missing. Functions returning a reference cannot do that and fail loudly instead.
 
 namespace copylib {
 
@@ -198,6 +201,14 @@ executor::executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_p
 	this->buffer_size = (buffer_size + detail::staging_alignment - 1) / detail::staging_alignment * detail::staging_alignment;
 	const auto staging_bytes = static_cast<size_t>(this->buffer_size);
 
+	// rethrows asynchronous errors from wait_and_throw, so that they are reported like any other failure; SYCL's default
+	// handler would terminate the process instead
+	const sycl::async_handler rethrow_async_errors = [](sycl::exception_list errors) {
+		for(const auto& e : errors) {
+			std::rethrow_exception(e);
+		}
+	};
+
 	// allocate queues and staging buffers
 	int dev_id = 0;
 	for(const auto& device : gpu_devices) {
@@ -215,7 +226,7 @@ executor::executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_p
 
 		std::vector<sycl::queue> queues;
 		for(int64_t i = 0; i < queues_per_device; i++) {
-			queues.emplace_back(sycl::queue(device, queue_properties));
+			queues.emplace_back(sycl::queue(device, rethrow_async_errors, queue_properties));
 		}
 		// allocated only once the device is listed, so that its destructor frees them if a later check throws
 		auto& dev = devices.emplace_back(device, queues);
@@ -402,20 +413,113 @@ namespace detail {
 		execute_plan_impl(exec, plan, fulfiller, 0, false);
 	}
 
-	struct copy_state {};
+	struct copy_state {
+		std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+		std::chrono::steady_clock::time_point end;
+		std::atomic<int64_t> unfinished_plans = 0;
+		std::atomic<bool> complete = false; // set last, so that the end time and the error are in place once it is true
+		std::atomic<int64_t>* staged_calls_in_flight = nullptr; // the executor's counter, for a call that uses staging
+		std::optional<std::string> error;
+		std::mutex mutex;
+		std::condition_variable completed;
+
+		void fail(const std::string& message) {
+			const std::lock_guard lock(mutex);
+			if(!error) { error = message; }
+		}
+
+		// called once for every plan, successful or not; the last one completes the call
+		void finish_plan() {
+			if(unfinished_plans.fetch_sub(1) == 1) { finish_call(); }
+		}
+
+		void finish_call() {
+			if(staged_calls_in_flight != nullptr) { --*staged_calls_in_flight; }
+			{
+				const std::lock_guard lock(mutex);
+				end = std::chrono::steady_clock::now();
+				complete = true;
+			}
+			completed.notify_all();
+		}
+	};
 
 } // namespace detail
 
 copy_handle::copy_handle(std::shared_ptr<detail::copy_state> state) : state(std::move(state)) {}
 
-bool copy_handle::is_complete() const { return {}; }
+bool copy_handle::is_complete() const { return state->complete; }
 
-void copy_handle::wait() const {}
+void copy_handle::wait() const {
+	std::unique_lock lock(state->mutex);
+	state->completed.wait(lock, [this] { return state->complete.load(); });
+}
 
-std::optional<std::string> copy_handle::error() const { return {}; }
+std::optional<std::string> copy_handle::error() const {
+	if(!is_complete()) { return std::nullopt; }
+	const std::lock_guard lock(state->mutex);
+	return state->error;
+}
 
-std::optional<std::chrono::nanoseconds> copy_handle::execution_time() const { return {}; }
+std::optional<std::chrono::nanoseconds> copy_handle::execution_time() const {
+	if(!is_complete()) { return std::nullopt; }
+	return std::chrono::duration_cast<std::chrono::nanoseconds>(state->end - state->start);
+}
 
-copy_handle execute_copy(executor& exec, const parallel_copy_set& set) { return copy_handle(std::make_shared<detail::copy_state>()); }
+copy_handle execute_copy(executor& exec, const parallel_copy_set& set) {
+	COPYLIB_ENSURE(is_valid(set), "Invalid copy set: {}", set);
+	auto state = std::make_shared<detail::copy_state>();
+
+	// staging is placed on the calling thread, so that running out of staging memory throws from this call
+	detail::staging_fulfiller fulfiller(exec);
+	parallel_copy_set fulfilled_set = set;
+	bool staged = false;
+	for(auto& plan : fulfilled_set) {
+		for(auto& spec : plan) {
+			staged = staged || spec.source_layout.is_unplaced_staging() || spec.target_layout.is_unplaced_staging();
+			fulfiller.fulfill(spec);
+		}
+	}
+	if(staged) {
+		state->staged_calls_in_flight = &exec.staged_calls_in_flight;
+		if(exec.staged_calls_in_flight++ > 0) {
+			utils::err_print("copylib warning: a staged copy started while another one is in flight; overlapping staged copies share staging memory, "
+			                 "which is undefined behaviour\n");
+		}
+	}
+
+	const int64_t total_plans = fulfilled_set.size();
+	state->unfinished_plans = total_plans;
+	if(total_plans == 0) {
+		state->finish_call();
+		return copy_handle(state);
+	}
+
+	// one contiguous part of the plans per queue index, each run by one worker; single-copy plans alternate devices
+	const int64_t parts_count = exec.get_queues_per_device();
+	int64_t first_plan = 0;
+	for(int64_t part = 0; part < parts_count; part++) {
+		const int64_t plans_in_part = total_plans / parts_count + (part < total_plans % parts_count ? 1 : 0);
+		if(plans_in_part == 0) { continue; }
+		// the worker owns its plans and shares the state, since the call returns before the plans have run
+		std::vector<copy_plan> plans(fulfilled_set.begin() + first_plan, fulfilled_set.begin() + first_plan + plans_in_part);
+		first_plan += plans_in_part;
+		exec.pool.detach_task([&exec, state, part, plans = std::move(plans)] {
+			noop_fulfiller ful;
+			int64_t plan_idx = 0;
+			for(const auto& plan : plans) {
+				const bool use_alternate_device = plan.size() == 1 && plan_idx % 2 == 1;
+				try {
+					execute_plan_impl(exec, plan, ful, part, use_alternate_device);
+				} catch(const std::exception& e) { //
+					state->fail(e.what());
+				} catch(...) { state->fail("unknown exception"); }
+				plan_idx++;
+				state->finish_plan();
+			}
+		});
+	}
+	return copy_handle(state);
+}
 
 } // namespace copylib
