@@ -48,9 +48,21 @@ inline void configure_test_system() {
 // staging memory per device, generous for the small copies of these tests
 inline constexpr int64_t test_staging_bytes = int64_t{1} << 20;
 
-[[nodiscard]] inline copylib::executor make_executor(int64_t devices = 2, int64_t queues_per_device = 2, int64_t staging_bytes = test_staging_bytes) {
+// The devices the tests copy between: the first `count` GPUs, as SimSYCL provides in CI. Where there are fewer, the first
+// device is repeated, so that a machine with a single device, such as AdaptiveCpp's CPU device, runs every test as well.
+[[nodiscard]] inline std::vector<sycl::device> test_devices(int64_t count) {
 	configure_test_system();
-	return copylib::executor(staging_bytes, devices, queues_per_device);
+	auto devices = sycl::device::get_devices(sycl::info::device_type::gpu);
+	if(devices.empty()) { devices = sycl::device::get_devices(); }
+	devices.resize(std::min(devices.size(), static_cast<size_t>(count)));
+	while(devices.size() < static_cast<size_t>(count)) {
+		devices.push_back(devices.front());
+	}
+	return devices;
+}
+
+[[nodiscard]] inline copylib::executor make_executor(int64_t devices = 2, int64_t queues_per_device = 2, int64_t staging_bytes = test_staging_bytes) {
+	return copylib::executor(staging_bytes, test_devices(devices), queues_per_device);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

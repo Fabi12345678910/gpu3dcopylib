@@ -241,7 +241,7 @@ particular, [consequence 3](#3-take-device-and-lane-as-parameters) makes caller-
 | Handle | **Option C.** `execute_copy` hands the plans to worker threads and returns immediately. Workers block between steps as in the 2D library, and the handle tracks their completion. |
 | Waiting | The handle has a blocking `wait()` next to the non-blocking `is_complete()`. Tests and benchmarks wait; a Celerity adapter would only poll. |
 | Thread pool | `BS::thread_pool`, as in the 2D library, but owned by the executor rather than a function-local `static`. It still has to be added as a dependency. |
-| Queues | The executor creates and owns its in-order queues, as in the 2D library. |
+| Queues | The executor creates and owns its in-order queues, as in the 2D library, but on the devices and in the contexts the caller passes as (device, context) pairs. |
 | Staging lifetime | Open. Until it is settled, staged calls are not blocked: overlapping ones are undefined behaviour, and the executor warns when a staged call starts while another is in flight. |
 | Error handling | Every failure throws `copylib::error`: invalid input, broken internal invariants and resource failures alike, so `COPYLIB_ENSURE` throws instead of calling `std::exit`. A failure inside a worker cannot reach the caller as an exception and is reported as a message through `copy_handle::error()` instead. The executor's queues get an async handler that rethrows, so that asynchronous SYCL errors reach that report instead of the default handler, which terminates. |
 

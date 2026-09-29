@@ -2,6 +2,7 @@
 
 #include <copylib/support.hpp> // IWYU pragma: keep - this is needed for formatting output, IWYU is dumb
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -46,8 +47,8 @@ bool executor::is_device_to_device_copy_available() const {
 	return false; // assumption for now
 #endif
 #elif defined(SYCL_LANGUAGE_VERSION) && defined(__INTEL_LLVM_COMPILER)
-	if(gpu_devices.empty()) { return false; }
-	return gpu_devices.front().get_info<sycl::info::device::vendor>().find("NVIDIA") != std::string::npos;
+	if(devices.empty()) { return false; }
+	return devices.front().dev.get_info<sycl::info::device::vendor>().find("NVIDIA") != std::string::npos;
 #else
 	return false;
 #endif
@@ -62,8 +63,8 @@ int32_t executor::get_preferred_wg_size() const {
 		if(env_str) {
 			wg_size = std::stoi(env_str);
 		} else {
-			if(gpu_devices.empty()) { return 32; }
-			if(gpu_devices.front().get_info<sycl::info::device::vendor>().find("Intel") != std::string::npos) {
+			if(devices.empty()) { return 32; }
+			if(devices.front().dev.get_info<sycl::info::device::vendor>().find("Intel") != std::string::npos) {
 				wg_size = 128;
 			} else {
 				wg_size = 32;
@@ -109,7 +110,7 @@ std::string executor::get_info() const {
 	ret += utils::format("Using {} queues per device\n", get_queues_per_device());
 	for(size_t i = 0; i < devices.size(); i++) {
 		ret += utils::format("    Device {:2}: {} [{}]", i, //
-		    gpu_devices[i].get_info<sycl::info::device::name>(), gpu_devices[i].get_info<sycl::info::device::vendor>());
+		    devices[i].dev.get_info<sycl::info::device::name>(), devices[i].dev.get_info<sycl::info::device::vendor>());
 		ret += utils::format(" (host alloc on core {})\n", get_cpu_for_gpu_alloc(i, devices.size()));
 	}
 	return ret;
@@ -143,8 +144,6 @@ void executor::barrier() {
 	}
 }
 
-executor::executor(int64_t buffer_size) : executor(buffer_size, sycl::device::get_devices(sycl::info::device_type::gpu).size(), 1) {}
-
 namespace {
 
 	// checked before the pool is built from it, which would start a thread per hardware thread for 0
@@ -174,20 +173,48 @@ namespace {
 #endif
 	}
 
+	// pairs each device with the context a queue created from the device alone gets, i.e. the implementation's default
+	// context, which a caller allocating through such queues uses as well
+	std::vector<std::pair<sycl::device, sycl::context>> with_default_contexts(const std::vector<sycl::device>& devices) {
+		std::vector<std::pair<sycl::device, sycl::context>> device_contexts;
+		for(const auto& device : devices) {
+			device_contexts.emplace_back(device, sycl::queue(device).get_context());
+		}
+		return device_contexts;
+	}
+
+	std::vector<std::pair<sycl::device, sycl::context>> first_gpus(int64_t devices_needed) {
+		COPYLIB_ENSURE(devices_needed > 0, "Need at least one device");
+		auto gpu_devices = sycl::device::get_devices(sycl::info::device_type::gpu);
+		if(gpu_devices.size() < static_cast<size_t>(devices_needed)) {
+			COPYLIB_ERROR("Not enough GPU devices available: {} ({} needed)", gpu_devices.size(), devices_needed);
+		} else if(gpu_devices.size() > static_cast<size_t>(devices_needed)) {
+			gpu_devices.resize(devices_needed); // don't waste time initializing more devices than needed
+		}
+		return with_default_contexts(gpu_devices);
+	}
+
 } // namespace
 
-executor::executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_per_device)
-    : buffer_size(buffer_size), pool(checked_queues_per_device(queues_per_device)) {
-	COPYLIB_ENSURE(devices_needed > 0, "Need at least one device");
-	COPYLIB_ENSURE(devices_needed <= static_cast<int64_t>(device_id::count), "Too many devices requested: {} (at most {})", devices_needed,
-	    static_cast<int>(device_id::count));
+executor::executor(int64_t buffer_size) : executor(buffer_size, sycl::device::get_devices(sycl::info::device_type::gpu).size(), 1) {}
 
-	gpu_devices = sycl::device::get_devices(sycl::info::device_type::gpu);
-	if(gpu_devices.size() < static_cast<size_t>(devices_needed)) {
-		COPYLIB_ERROR("Not enough GPU devices available: {} ({} needed)", gpu_devices.size(), devices_needed);
-	} else if(gpu_devices.size() > static_cast<size_t>(devices_needed)) {
-		gpu_devices.resize(devices_needed); // don't waste time initializing more devices than needed
+executor::executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_per_device)
+    : executor(buffer_size, first_gpus(devices_needed), queues_per_device) {}
+
+executor::executor(int64_t buffer_size, const std::vector<sycl::device>& devices, int64_t queues_per_device)
+    : executor(buffer_size, with_default_contexts(devices), queues_per_device) {}
+
+executor::executor(int64_t buffer_size, const std::vector<std::pair<sycl::device, sycl::context>>& device_contexts, int64_t queues_per_device)
+    : buffer_size(buffer_size), pool(checked_queues_per_device(queues_per_device)) {
+	COPYLIB_ENSURE(!device_contexts.empty(), "Need at least one device");
+	COPYLIB_ENSURE(device_contexts.size() <= static_cast<size_t>(device_id::count), "Too many devices: {} (at most {})", device_contexts.size(),
+	    static_cast<int>(device_id::count));
+	for(const auto& [device, context] : device_contexts) {
+		const auto context_devices = context.get_devices();
+		COPYLIB_ENSURE(std::find(context_devices.begin(), context_devices.end(), device) != context_devices.end(),
+		    "Device {} is not part of the context given with it", device.get_info<sycl::info::device::name>());
 	}
+
 	cpu_set_t prior_mask;
 	CPU_ZERO(&prior_mask);
 	COPYLIB_ENSURE(pthread_getaffinity_np(pthread_self(), sizeof(prior_mask), &prior_mask) == 0, "Failed to get CPU affinity");
@@ -211,7 +238,7 @@ executor::executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_p
 
 	// allocate queues and staging buffers
 	int dev_id = 0;
-	for(const auto& device : gpu_devices) {
+	for(const auto& [device, context] : device_contexts) {
 		const sycl::property_list queue_properties = {
 		    sycl::property::queue::in_order{},
 #ifdef ACPP_EXT_COARSE_GRAINED_EVENTS
@@ -226,7 +253,7 @@ executor::executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_p
 
 		std::vector<sycl::queue> queues;
 		for(int64_t i = 0; i < queues_per_device; i++) {
-			queues.emplace_back(sycl::queue(device, rethrow_async_errors, queue_properties));
+			queues.emplace_back(sycl::queue(context, device, rethrow_async_errors, queue_properties));
 		}
 		// allocated only once the device is listed, so that its destructor frees them if a later check throws
 		auto& dev = devices.emplace_back(device, queues);
@@ -237,7 +264,7 @@ executor::executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_p
 
 		cpu_set_t mask_for_device;
 		CPU_ZERO(&mask_for_device);
-		const auto cpu_id = get_cpu_for_gpu_alloc(dev_id, gpu_devices.size());
+		const auto cpu_id = get_cpu_for_gpu_alloc(dev_id, device_contexts.size());
 		CPU_SET(cpu_id, &mask_for_device);
 		COPYLIB_ENSURE(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &mask_for_device) == 0, "Failed to set CPU affinity");
 

@@ -164,7 +164,7 @@ TEST_CASE("handles can be waited on in any order", "[execution][handle]") {
 TEST_CASE("dropping the handle and destroying the executor still completes the copy", "[execution][handle]") {
 	// pageable host memory on both ends, the only memory that stays usable after the executor and its queues are gone
 	configure_test_system();
-	auto exec = std::make_unique<executor>(test_staging_bytes, 2, 2);
+	auto exec = std::make_unique<executor>(test_staging_bytes, test_devices(2), 2);
 	const prepared_copy copy(*exec, pageable_host, ref::fields(), pageable_host, shapes::six_rows_of_48(0));
 
 	static_cast<void>(launch(*exec, copy, chunked_strategy));
@@ -178,7 +178,7 @@ TEST_CASE("dropping the handle and destroying the executor still completes the c
 TEST_CASE("a failing copy is reported, not lost", "[execution][handle][error]") {
 	// a natural failure: 288 bytes of staging do not fit into 128 bytes of staging memory
 	configure_test_system();
-	executor exec(128, 2, 2);
+	executor exec(128, test_devices(2), 2);
 	const prepared_copy copy(exec, on_device(device_id::d0), ref::fields(), on_device(device_id::d1), ref::fields());
 
 	// depending on where the overflow is detected, it throws from the call or arrives through the handle

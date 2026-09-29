@@ -169,8 +169,10 @@ kernel as in the 2D suite: in 3D that mapping is the thing under test, and dupli
 the bug.
 
 The test harness configures SimSYCL's devices before the first device query, as the 2D executor did for itself
-(several identical GPUs), and allocates the memory it copies from and to with `sycl::malloc_device` and `sycl::malloc_host`
-on the executor's queues. The library leaves both to its caller.
+(several identical GPUs), picks the devices the executor gets (`test_devices`: the first GPUs, or on a machine with fewer,
+the first device repeated, so that AdaptiveCpp's single CPU device runs every test too), and allocates the memory it
+copies from and to with `sycl::malloc_device` and `sycl::malloc_host` on the executor's queues. The library leaves all
+three to its caller.
 
 Fill the target with a sentinel, copy, compare the whole buffer against the reference — that checks the copied bytes and
 that untouched bytes stayed untouched, which is the likely failure mode of chunk alignment rounding. Assert the source

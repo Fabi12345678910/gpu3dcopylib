@@ -13,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace copylib {
@@ -46,8 +47,15 @@ class executor {
 	};
 	static constexpr target null_target = target{device_id::count, 0};
 
-	executor(int64_t buffer_size);
+	// device_contexts[i] becomes d_i. Its queues and staging memory are created in the given context, which has to contain
+	// the device and be the one the caller's memory on that device belongs to.
+	executor(int64_t buffer_size, const std::vector<std::pair<sycl::device, sycl::context>>& device_contexts, int64_t queues_per_device = 1);
+	// devices[i] becomes d_i, in the default context that a queue created from the device alone gets
+	executor(int64_t buffer_size, const std::vector<sycl::device>& devices, int64_t queues_per_device = 1);
+	// the first devices_needed GPUs, in their default contexts
 	executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_per_device = 1);
+	// every GPU, with one queue each
+	executor(int64_t buffer_size);
 
 	sycl::queue& get_queue(device_id id, int64_t queue_idx = 0);
 	sycl::queue& get_queue(const target& tgt);
@@ -78,7 +86,6 @@ class executor {
 	friend copy_handle execute_copy(executor& exec, const parallel_copy_set& set);
 
 	device_list devices;
-	std::vector<sycl::device> gpu_devices;
 	int64_t buffer_size;
 	bool peer_access_available = false; // enabled and checked once by the constructor
 	std::atomic<int64_t> staged_calls_in_flight = 0; // overlapping staged calls are warned about, see docs/async-execution.md
