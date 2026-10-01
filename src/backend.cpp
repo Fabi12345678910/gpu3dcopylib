@@ -107,7 +107,7 @@ std::string executor::get_info() const {
 	ret += utils::format("SYCL implementation: {}\n", get_sycl_impl_name());
 	ret += utils::format("D2D copy: {}    Peer access: {}    Preferred wg size: {}\n", //
 	    is_device_to_device_copy_available(), is_peer_memory_access_available(), get_preferred_wg_size());
-	ret += utils::format("Using {} queues per device\n", get_queues_per_device());
+	ret += utils::format("Using {} queues per device, with {} bytes of staging per worker\n", get_queues_per_device(), get_staging_slice_size());
 	for(size_t i = 0; i < devices.size(); i++) {
 		ret += utils::format("    Device {:2}: {} [{}]", i, //
 		    devices[i].dev.get_info<sycl::info::device::name>(), devices[i].dev.get_info<sycl::info::device::vendor>());
@@ -227,6 +227,8 @@ executor::executor(int64_t buffer_size, const std::vector<std::pair<sycl::device
 	// a whole number of alignments, which aligned allocations require on some implementations; reported as the buffer size
 	this->buffer_size = (buffer_size + detail::staging_alignment - 1) / detail::staging_alignment * detail::staging_alignment;
 	const auto staging_bytes = static_cast<size_t>(this->buffer_size);
+	// one slice per worker, each placing the staging of the plan it runs at the start of its own slice
+	staging_slice_size = this->buffer_size / static_cast<int64_t>(pool.get_thread_count()) / detail::staging_alignment * detail::staging_alignment;
 
 	// rethrows asynchronous errors from wait_and_throw, so that they are reported like any other failure; SYCL's default
 	// handler would terminate the process instead
@@ -310,6 +312,8 @@ std::byte* executor::get_host_staging_buffer(device_id id) {
 
 int64_t executor::get_buffer_size() const { return buffer_size; }
 
+int64_t executor::get_staging_slice_size() const { return staging_slice_size; }
+
 int64_t executor::get_queues_per_device() const { return devices.front().queues.size(); }
 
 namespace detail {
@@ -367,7 +371,7 @@ namespace detail {
 		return {target, last_copy};
 	}
 
-	staging_fulfiller::staging_fulfiller(executor& exec) : exec(exec) {}
+	staging_fulfiller::staging_fulfiller(executor& exec, int64_t slice) : exec(exec), slice_offset(slice * exec.get_staging_slice_size()) {}
 
 	void staging_fulfiller::fulfill(data_layout& layout) {
 		if(!layout.is_unplaced_staging()) {return;}
@@ -383,15 +387,15 @@ namespace detail {
 				.on_host = host,
 			};
 			if(host) {
-				info.buffer = exec.get_host_staging_buffer(did) + current_host_staging_offsets[static_cast<size_t>(did)];
+				info.buffer = exec.get_host_staging_buffer(did) + slice_offset + current_host_staging_offsets[static_cast<size_t>(did)];
 				current_host_staging_offsets[static_cast<size_t>(did)] += (info.size + staging_alignment - 1) / staging_alignment * staging_alignment;
-				COPYLIB_ENSURE(current_host_staging_offsets[static_cast<size_t>(did)] <= exec.get_buffer_size(),
-					"Staging buffer overflow on host for device {}", static_cast<int>(did));
+				COPYLIB_ENSURE(current_host_staging_offsets[static_cast<size_t>(did)] <= exec.get_staging_slice_size(),
+					"Staging buffer overflow on host for device {}: a plan needs more than a worker's {} bytes", static_cast<int>(did), exec.get_staging_slice_size());
 			} else {
-				info.buffer = exec.get_staging_buffer(did) + current_staging_offsets[static_cast<size_t>(did)];
+				info.buffer = exec.get_staging_buffer(did) + slice_offset + current_staging_offsets[static_cast<size_t>(did)];
 				current_staging_offsets[static_cast<size_t>(did)] += (info.size + staging_alignment - 1) / staging_alignment * staging_alignment;
-				COPYLIB_ENSURE(current_staging_offsets[static_cast<size_t>(did)] <= exec.get_buffer_size(), "Staging buffer overflow for device {}",
-					static_cast<int>(did));
+				COPYLIB_ENSURE(current_staging_offsets[static_cast<size_t>(did)] <= exec.get_staging_slice_size(),
+					"Staging buffer overflow for device {}: a plan needs more than a worker's {} bytes", static_cast<int>(did), exec.get_staging_slice_size());
 			}
 			staging_it = staging_buffers.emplace(staging_idx, info).first;
 		} else {
@@ -410,11 +414,6 @@ namespace detail {
 } // namespace detail
 
 namespace {
-
-	class noop_fulfiller {
-	  public:
-		void fulfill(copy_spec&) {}
-	};
 
 	template <typename T>
 	concept StagingFulfiller = requires(T f, copy_spec c) {
@@ -436,7 +435,7 @@ namespace {
 namespace detail {
 
 	void execute_copy(executor& exec, const copy_plan& plan) {
-		staging_fulfiller fulfiller(exec);
+		staging_fulfiller fulfiller(exec, 0);
 		execute_plan_impl(exec, plan, fulfiller, 0, false);
 	}
 
@@ -445,7 +444,6 @@ namespace detail {
 		std::chrono::steady_clock::time_point end;
 		std::atomic<int64_t> unfinished_plans = 0;
 		std::atomic<bool> complete = false; // set last, so that the end time and the error are in place once it is true
-		std::atomic<int64_t>* staged_calls_in_flight = nullptr; // the executor's counter, for a call that uses staging
 		std::optional<std::string> error;
 		std::mutex mutex;
 		std::condition_variable completed;
@@ -461,7 +459,6 @@ namespace detail {
 		}
 
 		void finish_call() {
-			if(staged_calls_in_flight != nullptr) { --*staged_calls_in_flight; }
 			{
 				const std::lock_guard lock(mutex);
 				end = std::chrono::steady_clock::now();
@@ -495,27 +492,16 @@ std::optional<std::chrono::nanoseconds> copy_handle::execution_time() const {
 
 copy_handle execute_copy(executor& exec, const parallel_copy_set& set) {
 	COPYLIB_ENSURE(is_valid(set), "Invalid copy set: {}", set);
+	// every plan has to fit into one worker's slice of staging; checked here, so that a plan too large throws from this call
+	for(const auto& plan : set) {
+		detail::staging_fulfiller fits(exec, 0);
+		for(auto spec : plan) {
+			fits.fulfill(spec);
+		}
+	}
 	auto state = std::make_shared<detail::copy_state>();
 
-	// staging is placed on the calling thread, so that running out of staging memory throws from this call
-	detail::staging_fulfiller fulfiller(exec);
-	parallel_copy_set fulfilled_set = set;
-	bool staged = false;
-	for(auto& plan : fulfilled_set) {
-		for(auto& spec : plan) {
-			staged = staged || spec.source_layout.is_unplaced_staging() || spec.target_layout.is_unplaced_staging();
-			fulfiller.fulfill(spec);
-		}
-	}
-	if(staged) {
-		state->staged_calls_in_flight = &exec.staged_calls_in_flight;
-		if(exec.staged_calls_in_flight++ > 0) {
-			utils::err_print("copylib warning: a staged copy started while another one is in flight; overlapping staged copies share staging memory, "
-			                 "which is undefined behaviour\n");
-		}
-	}
-
-	const int64_t total_plans = fulfilled_set.size();
+	const int64_t total_plans = set.size();
 	state->unfinished_plans = total_plans;
 	if(total_plans == 0) {
 		state->finish_call();
@@ -529,15 +515,18 @@ copy_handle execute_copy(executor& exec, const parallel_copy_set& set) {
 		const int64_t plans_in_part = total_plans / parts_count + (part < total_plans % parts_count ? 1 : 0);
 		if(plans_in_part == 0) { continue; }
 		// the worker owns its plans and shares the state, since the call returns before the plans have run
-		std::vector<copy_plan> plans(fulfilled_set.begin() + first_plan, fulfilled_set.begin() + first_plan + plans_in_part);
+		std::vector<copy_plan> plans(set.begin() + first_plan, set.begin() + first_plan + plans_in_part);
 		first_plan += plans_in_part;
 		exec.pool.detach_task([&exec, state, part, plans = std::move(plans)] {
-			noop_fulfiller ful;
+			// staging goes into this worker's own slice, from its start for every plan: the worker runs one plan at a time and
+			// waits for it to finish, and no other worker uses the slice, so calls in flight together never share staging
+			const auto slice = static_cast<int64_t>(BS::this_thread::get_index().value());
 			int64_t plan_idx = 0;
 			for(const auto& plan : plans) {
 				const bool use_alternate_device = plan.size() == 1 && plan_idx % 2 == 1;
 				try {
-					execute_plan_impl(exec, plan, ful, part, use_alternate_device);
+					detail::staging_fulfiller fulfiller(exec, slice);
+					execute_plan_impl(exec, plan, fulfiller, part, use_alternate_device);
 				} catch(const std::exception& e) { //
 					state->fail(e.what());
 				} catch(...) { state->fail("unknown exception"); }

@@ -6,7 +6,6 @@
 
 #include <bs_thread_pool/bs_thread_pool.hpp>
 
-#include <atomic>
 #include <chrono>
 #include <deque>
 #include <memory>
@@ -65,6 +64,9 @@ class executor {
 
 	[[nodiscard]] int64_t get_buffer_size() const;
 	[[nodiscard]] int64_t get_queues_per_device() const;
+	// the staging memory of each worker, per device and kind: the buffer size divided among the queues_per_device workers,
+	// rounded down to the staging alignment; the staging of every plan has to fit into it
+	[[nodiscard]] int64_t get_staging_slice_size() const;
 
 	[[nodiscard]] std::string get_sycl_impl_name() const;
 	[[nodiscard]] bool is_device_to_device_copy_available() const;
@@ -88,7 +90,7 @@ class executor {
 	device_list devices;
 	int64_t buffer_size;
 	bool peer_access_available = false; // enabled and checked once by the constructor
-	std::atomic<int64_t> staged_calls_in_flight = 0; // overlapping staged calls are warned about, see docs/async-execution.md
+	int64_t staging_slice_size = 0;
 
 	// declared last, so it is destroyed first: waits for the copies in flight while queues and staging memory still exist
 	BS::light_thread_pool pool;
@@ -105,7 +107,8 @@ namespace detail {
 
 	class staging_fulfiller {
 	  public:
-		staging_fulfiller(executor& exec);
+		// places staging in the slice of worker `slice`, from its start; one fulfiller serves one plan
+		staging_fulfiller(executor& exec, int64_t slice);
 
 		void fulfill(data_layout& layout);
 		void fulfill(copy_spec& spec);
@@ -119,6 +122,7 @@ namespace detail {
 		};
 
 		executor& exec;
+		int64_t slice_offset;
 		std::vector<int64_t> current_staging_offsets = std::vector<int64_t>(static_cast<int>(device_id::count), 0);
 		std::vector<int64_t> current_host_staging_offsets = std::vector<int64_t>(static_cast<int>(device_id::count), 0);
 
@@ -136,6 +140,7 @@ namespace detail {
 
 	step_result execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx = 0, bool alternate_device = false, step_result last = {});
 
+	// blocks until the plan is done; stages in the first worker's slice, so no execute_copy(set) may be in flight meanwhile
 	void execute_copy(executor& exec, const copy_plan& plan);
 
 } // namespace detail

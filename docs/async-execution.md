@@ -242,7 +242,7 @@ particular, [consequence 3](#3-take-device-and-lane-as-parameters) makes caller-
 | Waiting | The handle has a blocking `wait()` next to the non-blocking `is_complete()`. Tests and benchmarks wait; a Celerity adapter would only poll. |
 | Thread pool | `BS::thread_pool`, as in the 2D library, but owned by the executor rather than a function-local `static`. It still has to be added as a dependency. |
 | Queues | The executor creates and owns its in-order queues, as in the 2D library, but on the devices and in the contexts the caller passes as (device, context) pairs. |
-| Staging lifetime | Open. Until it is settled, staged calls are not blocked: overlapping ones are undefined behaviour, and the executor warns when a staged call starts while another is in flight. |
+| Staging lifetime | Each staging buffer is divided into one slice per pool worker (`get_staging_slice_size()`, i.e. `buffer_size / queues_per_device`). A worker places the staging of the plan it runs at the start of its own slice, fresh for every plan; it runs one plan at a time and waits for it, so the slice is free again, and no other worker uses it. Calls in flight together therefore never share staging, and a chunked copy may stage more than `buffer_size` in total. Every plan has to fit into one slice, which `execute_copy` checks before returning. Chosen over an allocator that releases staging per call or per plan, which would use the memory better but needs all-or-nothing reservations and workers waiting for memory. |
 | Error handling | Every failure throws `copylib::error`: invalid input, broken internal invariants and resource failures alike, so `COPYLIB_ENSURE` throws instead of calling `std::exit`. A failure inside a worker cannot reach the caller as an exception and is reported as a message through `copy_handle::error()` instead. The executor's queues get an async handler that rethrows, so that asynchronous SYCL errors reach that report instead of the default handler, which terminates. |
 
 Compared with the analysis above, this leaves out three things for now, all motivated by Celerity: polling events
@@ -328,13 +328,8 @@ Only `execute_copy` creates handles, so there is no public constructor and no em
 
 ## Open questions
 
-- **Staging lifetime.** The 2D fulfiller hands out offsets from 0 on every call, which was safe only because calls
-  blocked until their copies finished. With option C, two calls in flight receive the same staging memory. The options
-  are an allocator owned by the executor that releases a call's buffers when its last plan finishes, serialising staged
-  calls so that a second one waits for the first, or staging memory from the caller (next point). Whichever it is,
-  reclamation hangs off the same completion point as the handle. Until then, overlapping staged calls are undefined behaviour and the executor only warns about them.
-- **Staging ownership.** Staging buffers could come from the caller's allocator, which Celerity tracks, instead of from
-  buffers owned by the executor.
+- **Staging ownership.** The staging buffers could come from the caller's allocator, which Celerity tracks, instead of
+  being allocated by the executor; handing them to the constructor would leave the per-worker slices unchanged.
 - **Multi-lane execution under Celerity**, part of the integration: which [route](#working-within-the-lane-constraint)
   to take, pending the measurement described in [Which one](#which-one). A third option, not worked out here, is to keep
   manifesting as a pure planning API that Celerity's instruction graph generator calls, so that it emits one instruction

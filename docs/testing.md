@@ -187,8 +187,9 @@ SimSYCL executes each step when it is submitted, so a worker that fails to wait 
 bytes, and CI cannot see ordering. There is deliberately no test-only hook for recording submissions and no dedicated
 ordering test: the layer 9 tests producing correct bytes on an asynchronous SYCL implementation such as DPC++ or
 AdaptiveCpp is taken as sufficient. What CI does check is that several calls in flight at once each produce correct
-bytes; overlapping staged calls are undefined behaviour until the
-[staging lifetime](async-execution.md#open-questions) is decided, and are not tested.
+bytes, staged ones included, which would overwrite each other's staged chunks if workers shared staging memory; that a
+chunked copy may stage more than `buffer_size` in total; and that a plan too large for a worker's slice is rejected by
+the call.
 
 ### 11. Async handle semantics
 

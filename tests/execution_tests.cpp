@@ -18,8 +18,7 @@
 //
 // Everything here uses real copies; there is deliberately no hook into the workers. So a copy that is not complete yet
 // cannot be asserted, since SimSYCL may already have finished it, and ordering between the steps of a plan is left to
-// the layer 9 bytes on an asynchronous SYCL implementation. Overlapping staged calls are undefined behaviour for now
-// and not tested. See docs/testing.md.
+// the layer 9 bytes on an asynchronous SYCL implementation. See docs/testing.md.
 
 using namespace copylib;
 using namespace copylib_testing;
@@ -30,6 +29,8 @@ namespace {
 const copy_strategy direct_strategy = strategy_from_fields(copy_type::direct, copy_properties::none, d2d_implementation::direct, 0);
 const copy_strategy chunked_strategy = strategy_from_fields(copy_type::direct, copy_properties::use_kernel, d2d_implementation::direct, 64);
 const copy_strategy staged_strategy = strategy_from_fields(copy_type::staged, copy_properties::none, d2d_implementation::direct, 0);
+const copy_strategy staged_chunked_strategy = strategy_from_fields(copy_type::staged, copy_properties::use_kernel, d2d_implementation::direct, 64);
+const copy_strategy host_staged_chunked_strategy = strategy_from_fields(copy_type::staged, copy_properties::none, d2d_implementation::host_staging_at_both, 64);
 
 copy_handle launch(executor& exec, const prepared_copy& copy, const copy_strategy& strategy) {
 	return execute_copy(exec, manifest_strategy(copy.spec(), strategy, basic_staging_provider{}));
@@ -43,31 +44,68 @@ data_layout large_run() { return normal_form::one_run(0, 0, int64_t{8} << 20); }
 // ---------------------------------------------------------------------------------------------------------------------
 // Layer 10: calls in flight
 
-TEST_CASE("several calls in flight each produce correct bytes", "[execution][concurrency]") {
-	auto exec = make_executor();
-	const std::vector<std::pair<location, location>> ends = {
-	    {on_device(device_id::d0), on_device(device_id::d1)},
-	    {on_device(device_id::d1), on_device(device_id::d0)},
-	    {on_device(device_id::d0), on_device(device_id::d0)},
-	    {pinned_host, on_device(device_id::d1)},
-	    {on_device(device_id::d0), pageable_host},
-	    {pageable_host, pageable_host},
-	};
+const std::vector<std::pair<location, location>> in_flight_ends = {
+    {on_device(device_id::d0), on_device(device_id::d1)},
+    {on_device(device_id::d1), on_device(device_id::d0)},
+    {on_device(device_id::d0), on_device(device_id::d0)},
+    {pinned_host, on_device(device_id::d1)},
+    {on_device(device_id::d0), pageable_host},
+    {pageable_host, pageable_host},
+};
 
-	// unstaged strategies only, since overlapping staged calls are undefined behaviour for now
+// launches every end pair `rounds` times with alternating strategies before waiting for any of them
+void check_calls_in_flight(executor& exec, const copy_strategy& even, const copy_strategy& odd, int rounds) {
 	std::vector<std::unique_ptr<prepared_copy>> copies;
 	std::vector<copy_handle> handles;
-	for(size_t i = 0; i < ends.size(); ++i) {
-		copies.push_back(std::make_unique<prepared_copy>(exec, ends[i].first, ref::fields(), ends[i].second, shapes::six_rows_of_48(0)));
-		handles.push_back(launch(exec, *copies.back(), i % 2 == 0 ? direct_strategy : chunked_strategy));
+	std::vector<std::string> names;
+	for(int round = 0; round < rounds; ++round) {
+		for(size_t i = 0; i < in_flight_ends.size(); ++i) {
+			const auto& [from, to] = in_flight_ends[i];
+			copies.push_back(std::make_unique<prepared_copy>(exec, from, ref::fields(), to, shapes::six_rows_of_48(0)));
+			handles.push_back(launch(exec, *copies.back(), i % 2 == 0 ? even : odd));
+			names.push_back(describe(from) + " -> " + describe(to));
+		}
 	}
 
 	copy_report report;
 	for(size_t i = 0; i < copies.size(); ++i) {
 		handles[i].wait();
-		report.add(copies[i]->verify(handles[i].error()), describe(ends[i].first) + " -> " + describe(ends[i].second));
+		report.add(copies[i]->verify(handles[i].error()), names[i]);
 	}
 	report.check();
+}
+
+TEST_CASE("several calls in flight each produce correct bytes", "[execution][concurrency]") {
+	auto exec = make_executor();
+	check_calls_in_flight(exec, direct_strategy, chunked_strategy, 1);
+}
+
+TEST_CASE("staged calls in flight at the same time never share staging memory", "[execution][concurrency][staging]") {
+	// every worker stages in its own slice, fresh for each plan; overlapping calls would otherwise overwrite each other's
+	// staged chunks
+	auto exec = make_executor();
+	check_calls_in_flight(exec, staged_chunked_strategy, host_staged_chunked_strategy, 4);
+}
+
+TEST_CASE("a chunked copy may stage more than the buffer size in total", "[execution][staging]") {
+	// 288 bytes in chunks of 64 stage 5 x 128 bytes on each device, more than the 256 bytes there are; one chunk fits a slice
+	executor exec(256, test_devices(2), 1);
+	REQUIRE(exec.get_staging_slice_size() == 256);
+	const prepared_copy copy(exec, on_device(device_id::d0), ref::fields(), on_device(device_id::d1), shapes::six_rows_of_48(0));
+
+	const auto outcome = run_copy(exec, copy, staged_chunked_strategy);
+	INFO(outcome.describe());
+	CHECK(outcome.correct());
+}
+
+TEST_CASE("a plan staging more than a worker's slice is rejected by the call", "[execution][staging][error]") {
+	// two workers share 256 bytes, so each slice holds 128 bytes; an unchunked staged copy of 288 bytes cannot fit
+	executor exec(256, test_devices(2), 2);
+	REQUIRE(exec.get_staging_slice_size() == 128);
+	const prepared_copy copy(exec, on_device(device_id::d0), ref::fields(), on_device(device_id::d1), shapes::six_rows_of_48(0));
+
+	CHECK_THROWS_AS(launch(exec, copy, staged_strategy), copylib::error);
+	CHECK_NOTHROW(launch(exec, copy, staged_chunked_strategy).wait());
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

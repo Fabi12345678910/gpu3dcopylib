@@ -129,7 +129,7 @@ These decide the public API and should be settled before implementing the backen
 These can be settled during implementation:
 
 4. **Staging alignment bug** in the 2D fulfiller (`size + alignment % size` does not round up). Fix it with proper round-up alignment.
-5. **Staging memory reuse.** All staging buffers of a set currently have to fit in `buffer_size` at once. Tied to the open staging lifetime question in [async-execution.md](async-execution.md#open-questions).
+5. **Staging memory reuse.** Decided: one slice of the staging buffers per pool worker, reused for every plan that worker runs, see [async-execution.md](async-execution.md#decisions). Only a single plan has to fit into a slice, not the whole set.
 6. **Strategy selection.** Should the library offer `select_strategy(spec, exec)` with benchmark-based thresholds?
 7. **Testing approach.** Property tests on SimSYCL comparing against a byte-by-byte reference copy.
 

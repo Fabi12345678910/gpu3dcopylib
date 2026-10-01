@@ -74,6 +74,12 @@ TEST_CASE("the executor's buffer size is its staging memory per device", "[execu
 	CHECK(exec.get_buffer_size() == 12346 * 64);
 }
 
+TEST_CASE("the staging memory is divided evenly among the workers", "[executor][staging]") {
+	// one worker per queue index; 790144 / 2 = 395072 bytes, rounded down to the 128-byte staging alignment
+	const auto exec = make_executor(1, 2, 12345 * 64);
+	CHECK(exec.get_staging_slice_size() == 3086 * 128);
+}
+
 TEST_CASE("an executor cannot have more devices than device_id can name", "[executor][error]") {
 	CHECK_THROWS_AS(executor(test_staging_bytes, test_devices(9), 1), copylib::error);
 	CHECK_NOTHROW(executor(test_staging_bytes, test_devices(8), 1));
