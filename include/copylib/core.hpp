@@ -67,55 +67,48 @@ struct data_layout {
 	data_layout() = default;
 
 	// a contiguous 1D layout of `length` bytes, starting `offset` bytes into the allocation
-	data_layout(intptr_t base, int64_t offset, int64_t length):base(base), d0_stride(length+offset), d1_stride(1),
-		d0_start_offset(offset), d1_start_offset(0), d2_start_offset(0), d0_end_offset(length+offset), d1_end_offset(1), d2_end_offset(1),
-		start(0), end(length){};
+	data_layout(intptr_t base, int64_t offset, int64_t length)
+	    : base(base), d0_stride(length + offset), d1_stride(1), d0_start_offset(offset), d1_start_offset(0), d2_start_offset(0), d0_end_offset(length + offset),
+	      d1_end_offset(1), d2_end_offset(1), start(0), end(length) {}
 	data_layout(intptr_t base, int64_t d0_stride, int64_t d1_stride, int64_t d0_start_offset, int64_t d1_start_offset, int64_t d2_start_offset,
-	    int64_t d0_end_offset, int64_t d1_end_offset, int64_t d2_end_offset):base(base), d0_stride(d0_stride), d1_stride(d1_stride),
-			d0_start_offset(d0_start_offset), d1_start_offset(d1_start_offset), d2_start_offset(d2_start_offset),
-			d0_end_offset(d0_end_offset), d1_end_offset(d1_end_offset), d2_end_offset(d2_end_offset),
-			start(0), end((d2_end_offset-d2_start_offset)*(d1_end_offset-d1_start_offset)*(d0_end_offset-d0_start_offset)){};
+	    int64_t d0_end_offset, int64_t d1_end_offset, int64_t d2_end_offset)
+	    : base(base), d0_stride(d0_stride), d1_stride(d1_stride), d0_start_offset(d0_start_offset), d1_start_offset(d1_start_offset),
+	      d2_start_offset(d2_start_offset), d0_end_offset(d0_end_offset), d1_end_offset(d1_end_offset), d2_end_offset(d2_end_offset), start(0),
+	      end((d2_end_offset - d2_start_offset) * (d1_end_offset - d1_start_offset) * (d0_end_offset - d0_start_offset)) {}
 	// the same box and window as `layout`, but in the allocation at `base`
-	data_layout(intptr_t base, const data_layout& layout):base(base), d0_stride(layout.d0_stride), d1_stride(layout.d1_stride),
-			d0_start_offset(layout.d0_start_offset), d1_start_offset(layout.d1_start_offset), d2_start_offset(layout.d2_start_offset),
-			d0_end_offset(layout.d0_end_offset), d1_end_offset(layout.d1_end_offset), d2_end_offset(layout.d2_end_offset),
-			start(layout.start), end(layout.end){};
+	data_layout(intptr_t base, const data_layout& layout)
+	    : base(base), d0_stride(layout.d0_stride), d1_stride(layout.d1_stride), d0_start_offset(layout.d0_start_offset),
+	      d1_start_offset(layout.d1_start_offset), d2_start_offset(layout.d2_start_offset), d0_end_offset(layout.d0_end_offset),
+	      d1_end_offset(layout.d1_end_offset), d2_end_offset(layout.d2_end_offset), start(layout.start), end(layout.end) {}
 
-	data_layout(staging_id staging, int64_t offset, int64_t length):staging(staging), d0_stride(length+offset), d1_stride(1),
-		d0_start_offset(offset), d1_start_offset(0), d2_start_offset(0), d0_end_offset(length+offset), d1_end_offset(1), d2_end_offset(1),
-		start(0), end(length){};
+	data_layout(staging_id staging, int64_t offset, int64_t length)
+	    : staging(staging), d0_stride(length + offset), d1_stride(1), d0_start_offset(offset), d1_start_offset(0), d2_start_offset(0),
+	      d0_end_offset(length + offset), d1_end_offset(1), d2_end_offset(1), start(0), end(length) {}
 	data_layout(staging_id staging, int64_t d0_stride, int64_t d1_stride, int64_t d0_start_offset, int64_t d1_start_offset, int64_t d2_start_offset,
-	    int64_t d0_end_offset, int64_t d1_end_offset, int64_t d2_end_offset):staging(staging), d0_stride(d0_stride), d1_stride(d1_stride),
-			d0_start_offset(d0_start_offset), d1_start_offset(d1_start_offset), d2_start_offset(d2_start_offset),
-			d0_end_offset(d0_end_offset), d1_end_offset(d1_end_offset), d2_end_offset(d2_end_offset),
-			start(0), end((d2_end_offset-d2_start_offset)*(d1_end_offset-d1_start_offset)*(d0_end_offset-d0_start_offset)){};
-	// the same box and window as `layout`, but in the allocation at `base`
-	data_layout(staging_id staging, const data_layout& layout):staging(staging), d0_stride(layout.d0_stride), d1_stride(layout.d1_stride),
-			d0_start_offset(layout.d0_start_offset), d1_start_offset(layout.d1_start_offset), d2_start_offset(layout.d2_start_offset),
-			d0_end_offset(layout.d0_end_offset), d1_end_offset(layout.d1_end_offset), d2_end_offset(layout.d2_end_offset),
-			start(layout.start), end(layout.end){};
+	    int64_t d0_end_offset, int64_t d1_end_offset, int64_t d2_end_offset)
+	    : staging(staging), d0_stride(d0_stride), d1_stride(d1_stride), d0_start_offset(d0_start_offset), d1_start_offset(d1_start_offset),
+	      d2_start_offset(d2_start_offset), d0_end_offset(d0_end_offset), d1_end_offset(d1_end_offset), d2_end_offset(d2_end_offset), start(0),
+	      end((d2_end_offset - d2_start_offset) * (d1_end_offset - d1_start_offset) * (d0_end_offset - d0_start_offset)) {}
+	// the same box and window as `layout`, but in the unplaced staging buffer `staging`
+	data_layout(staging_id staging, const data_layout& layout)
+	    : staging(staging), d0_stride(layout.d0_stride), d1_stride(layout.d1_stride), d0_start_offset(layout.d0_start_offset),
+	      d1_start_offset(layout.d1_start_offset), d2_start_offset(layout.d2_start_offset), d0_end_offset(layout.d0_end_offset),
+	      d1_end_offset(layout.d1_end_offset), d2_end_offset(layout.d2_end_offset), start(layout.start), end(layout.end) {}
 
 	// the same layout with the window narrowed to [start, end)
-	[[nodiscard]] data_layout with_window(int64_t start, int64_t end) const{
+	[[nodiscard]] data_layout with_window(int64_t start, int64_t end) const {
 		data_layout layout(this->base, *this);
 		layout.start = start;
 		layout.end = end;
 		return layout;
-	};
+	}
 
 	// the number of bytes this layout actually copies, i.e. the length of its window
-	[[nodiscard]] constexpr int64_t window_length() const {
-		return end - start;
-	}
+	[[nodiscard]] constexpr int64_t window_length() const { return end - start; }
 
 	// bytes covered by the box, excluding the gaps
 	[[nodiscard]] constexpr int64_t total_bytes() const {
-		return (d2_end_offset-d2_start_offset)*(d1_end_offset-d1_start_offset)*(d0_end_offset-d0_start_offset);
-	}
-
-	// offset just past the last byte of the box, relative to the allocation base, for bounds checks against a buffer size
-	[[nodiscard]] constexpr int64_t end_offset() const {
-		return (d2_end_offset-1)*d1_stride*d0_stride + (d1_end_offset-1)*d0_stride + d0_end_offset;
+		return (d2_end_offset - d2_start_offset) * (d1_end_offset - d1_start_offset) * (d0_end_offset - d0_start_offset);
 	}
 
 	// byte offset in the allocation of the byte `packed_offset` bytes into the box, with the gaps excluded.
@@ -126,19 +119,17 @@ struct data_layout {
 		int64_t i_d0 = packed_offset % d0_size;
 		int64_t i_d1 = (packed_offset % d1_size) / d0_size;
 		int64_t i_d2 = packed_offset / d1_size;
-		//byte packed_offset sits at box[i_d2][i_d1][i_d0]
+		// byte packed_offset sits at box[i_d2][i_d1][i_d0]
 		return (i_d2 + d2_start_offset) * d1_stride * d0_stride + (i_d1 + d1_start_offset) * d0_stride + (i_d0 + d0_start_offset);
 	}
 
-	[[nodiscard]] constexpr bool d1_contiguous() const { 
-		return d0_start_offset == 0 && d0_end_offset == d0_stride;
-	} // rows are adjacent, so they can be collapsed
-	[[nodiscard]] constexpr bool d2_contiguous() const { 
-		return d1_contiguous() && (d1_start_offset == 0 && d1_end_offset == d1_stride);
-	}    // planes are adjacent, so they can be collapsed
+	// rows are adjacent, so they can be collapsed
+	[[nodiscard]] constexpr bool d1_contiguous() const { return d0_start_offset == 0 && d0_end_offset == d0_stride; }
+	// planes are adjacent, so they can be collapsed
+	[[nodiscard]] constexpr bool d2_contiguous() const { return d1_contiguous() && (d1_start_offset == 0 && d1_end_offset == d1_stride); }
 
 	// shape predicates, all defined over the window rather than over the whole box
-	[[nodiscard]] constexpr bool is_window_contiguous() const { 
+	[[nodiscard]] constexpr bool is_window_contiguous() const {
 		if(d2_contiguous()) return true; // the whole box is one run
 		const int64_t d0_extent = d0_end_offset - d0_start_offset;
 		const int64_t last = end - 1;
@@ -148,62 +139,24 @@ struct data_layout {
 		}
 		return start / d0_extent == last / d0_extent; // inside a single row
 	}
-	
-	[[nodiscard]] constexpr bool is_unplaced_staging() const {
-		return staging.is_staging_id == staging_id::staging_id_flag;
-	}
-	[[nodiscard]] std::byte* base_ptr() const{
-		return reinterpret_cast<std::byte*>(base);
-	}
+
+	[[nodiscard]] constexpr bool is_unplaced_staging() const { return staging.is_staging_id == staging_id::staging_id_flag; }
+	[[nodiscard]] std::byte* base_ptr() const { return reinterpret_cast<std::byte*>(base); }
 
 	// Compares the encoding field by field, window included. Two layouts describing the same bytes with different strides
 	// compare unequal; normalize both first to compare the bytes they describe.
-	constexpr bool operator==(const data_layout& other) const{
-		return other.d0_stride == d0_stride
-		&& other.d1_stride == d1_stride
-		&& other.d0_end_offset == d0_end_offset
-		&& other.d1_end_offset == d1_end_offset
-		&& other.d2_end_offset == d2_end_offset
-		&& other.d0_start_offset == d0_start_offset
-		&& other.d1_start_offset == d1_start_offset
-		&& other.d2_start_offset == d2_start_offset
-		&& other.start == start
-		&& other.end == end
-		&& other.base == base;
-	};
-
-	constexpr bool operator!=(const data_layout& other) const{
-		return !(*this == other);
-	};
-};
-
-// Invokes f(offset_in_allocation, run_length) for each contiguous run of bytes covered by the layout's window.
-// This is the iteration primitive for the copy paths and the host memcpy fallback. Per-fragment indexing cannot serve
-// that purpose, because a window may start or end in the middle of a row, making its first and last runs partial.
-template <typename F>
-void for_each_contiguous_run(const data_layout& layout, F&& f) {
-	if(layout.start >= layout.end) { return; }
-	const int64_t row_extent = layout.d0_end_offset - layout.d0_start_offset;
-	int64_t run_offset = 0;
-	int64_t run_length = 0;
-	for(int64_t packed = layout.start; packed < layout.end;) {
-		const int64_t offset = layout.offset_at(packed);
-		// the rest of the row that `packed` falls into, clipped to the window
-		const int64_t take = std::min(row_extent - packed % row_extent, layout.end - packed);
-		if(run_length != 0 && offset != run_offset + run_length) {
-			f(run_offset, run_length);
-			run_length = 0;
-		}
-		if(run_length == 0) { run_offset = offset; }
-		run_length += take;
-		packed += take;
+	constexpr bool operator==(const data_layout& other) const {
+		return other.d0_stride == d0_stride && other.d1_stride == d1_stride && other.d0_end_offset == d0_end_offset && other.d1_end_offset == d1_end_offset
+		       && other.d2_end_offset == d2_end_offset && other.d0_start_offset == d0_start_offset && other.d1_start_offset == d1_start_offset
+		       && other.d2_start_offset == d2_start_offset && other.start == start && other.end == end && other.base == base;
 	}
-	f(run_offset, run_length);
-}
+
+	constexpr bool operator!=(const data_layout& other) const { return !(*this == other); }
+};
 
 enum class copy_properties {
 	none = 0x0000,
-	use_kernel = 0x0001,  // whether to use a kernel to perform the copy
+	use_kernel = 0x0001, // whether to use a kernel to perform the copy
 };
 
 inline copy_properties operator|(copy_properties a, copy_properties b) { return static_cast<copy_properties>(static_cast<int>(a) | static_cast<int>(b)); }
@@ -290,23 +243,23 @@ data_layout normalize(const data_layout& layout);
 copy_spec normalize(const copy_spec& spec);
 
 // The widest element the copy kernels can use, i.e. the largest power of two up to 64 dividing the row extents,
-// `d0_stride` and `d0_start_offset` of both sides and the shift between the two windows; the base is assumed to be
-// 64-byte aligned. Chunk boundaries are multiples of it, and a smaller `chunk_size` is raised to it.
-inline int64_t copy_alignment(const copy_spec& spec){
+// `d0_stride` and `d0_start_offset` of both sides and the shift between the two windows. Chunk boundaries are multiples
+// of it, and a smaller `chunk_size` is raised to it. The bases are unknown while planning, so the kernels narrow the
+// element further for a base aligned to less.
+inline int64_t copy_alignment(const copy_spec& spec) {
 	int64_t alignment = 64;
 	int64_t source_width = spec.source_layout.d0_end_offset - spec.source_layout.d0_start_offset;
 	int64_t target_width = spec.target_layout.d0_end_offset - spec.target_layout.d0_start_offset;
 	int64_t shift = spec.source_layout.start - spec.target_layout.start;
-	for(; alignment > 1; alignment >>= 1){
-		if(source_width % alignment == 0 && target_width % alignment == 0
-			&& spec.source_layout.d0_stride % alignment == 0 && spec.target_layout.d0_stride % alignment == 0
-			&& spec.source_layout.d0_start_offset % alignment == 0 && spec.target_layout.d0_start_offset % alignment == 0
-			&& shift % alignment == 0){
+	for(; alignment > 1; alignment >>= 1) {
+		if(source_width % alignment == 0 && target_width % alignment == 0 && spec.source_layout.d0_stride % alignment == 0
+		    && spec.target_layout.d0_stride % alignment == 0 && spec.source_layout.d0_start_offset % alignment == 0
+		    && spec.target_layout.d0_start_offset % alignment == 0 && shift % alignment == 0) {
 			break;
 		}
 	}
 	return alignment;
-};
+}
 
 // Invokes f(source_offset, target_offset, length) for each run of bytes that is contiguous on both sides of the copy, in
 // packed order, with offsets relative to each side's allocation base. A run ends where a run of either side ends, so a
@@ -322,7 +275,7 @@ void for_each_copy_run(const copy_spec& spec, F&& f) {
 	int64_t run_source = 0;
 	int64_t run_target = 0;
 	int64_t run_length = 0;
-	//the idea here is to build up the run length until there is an actual gap in the data, at which point f is being called
+	// the idea here is to build up the run length until there is an actual gap in the data, at which point f is being called
 	for(int64_t i = 0; i < length;) {
 		const int64_t source_offset = source.offset_at(source.start + i);
 		const int64_t target_offset = target.offset_at(target.start + i);
@@ -349,9 +302,7 @@ using staging_buffer_provider = std::function<staging_id(device_id, bool, int64_
 
 class basic_staging_provider {
   public:
-	staging_id operator()(device_id did, bool on_host, [[maybe_unused]] int64_t size){
-		return {on_host, did, next_staging_idx++};
-	}
+	staging_id operator()(device_id did, bool on_host, [[maybe_unused]] int64_t size) { return {on_host, did, next_staging_idx++}; }
 
   private:
 	uint32_t next_staging_idx = 0;

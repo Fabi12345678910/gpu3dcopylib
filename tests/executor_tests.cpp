@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -27,12 +28,13 @@ using device_contexts = std::vector<std::pair<sycl::device, sycl::context>>;
 
 namespace {
 
-// sets COPYLIB_ALLOC_CPU_IDS for its lifetime
-struct alloc_cpu_ids {
-	explicit alloc_cpu_ids(const std::string& ids) { setenv("COPYLIB_ALLOC_CPU_IDS", ids.c_str(), 1); }
-	alloc_cpu_ids(const alloc_cpu_ids&) = delete;
-	alloc_cpu_ids& operator=(const alloc_cpu_ids&) = delete;
-	~alloc_cpu_ids() { unsetenv("COPYLIB_ALLOC_CPU_IDS"); }
+// sets an environment variable for its lifetime
+struct scoped_env {
+	const char* name;
+	scoped_env(const char* name, const std::string& value) : name(name) { setenv(name, value.c_str(), 1); }
+	scoped_env(const scoped_env&) = delete;
+	scoped_env& operator=(const scoped_env&) = delete;
+	~scoped_env() { unsetenv(name); }
 };
 
 cpu_set_t current_affinity() {
@@ -111,6 +113,17 @@ TEST_CASE("the staging memory is divided evenly among the workers", "[executor][
 	CHECK(exec.get_staging_slice_size() == 3086 * 128);
 }
 
+TEST_CASE("an executor needs staging memory for every worker", "[executor][staging][error]") {
+	// none, negative, and 128 bytes, which leave each of two workers less than the 128-byte staging alignment
+	CHECK_THROWS_AS(executor(0, test_devices(1), 1), copylib::error);
+	CHECK_THROWS_AS(executor(-128, test_devices(1), 1), copylib::error);
+	CHECK_THROWS_AS(executor(128, test_devices(1), 2), copylib::error);
+	CHECK_NOTHROW(executor(256, test_devices(1), 2));
+}
+
+// a buffer size alone does not convert into an executor
+static_assert(!std::is_convertible_v<int64_t, executor>);
+
 TEST_CASE("an executor cannot have more devices than device_id can name", "[executor][error]") {
 	CHECK_THROWS_AS(executor(test_staging_bytes, test_devices(9), 1), copylib::error);
 	CHECK_NOTHROW(executor(test_staging_bytes, test_devices(8), 1));
@@ -145,7 +158,7 @@ TEST_CASE("host staging is pinned only when COPYLIB_ALLOC_CPU_IDS asks for it", 
 	REQUIRE(cpu >= 0);
 	const auto before = current_affinity();
 	{
-		const alloc_cpu_ids ids(std::to_string(cpu) + "," + std::to_string(cpu));
+		const scoped_env ids("COPYLIB_ALLOC_CPU_IDS", std::to_string(cpu) + "," + std::to_string(cpu));
 		CHECK(get_cpu_for_gpu_alloc(1, 2) == cpu);
 		CHECK(make_executor().get_info().find("host alloc on core " + std::to_string(cpu)) != std::string::npos);
 	}
@@ -158,11 +171,28 @@ TEST_CASE("an invalid COPYLIB_ALLOC_CPU_IDS is reported as copylib::error", "[ex
 	const auto before = current_affinity();
 	for(const char* ids : {"0,x", "0, 1", "0", "-1,0", "1023,1023"}) {
 		CAPTURE(ids);
-		const alloc_cpu_ids set(ids);
+		const scoped_env set("COPYLIB_ALLOC_CPU_IDS", ids);
 		CHECK_THROWS_AS(make_executor(2, 1), copylib::error);
 	}
 	const auto after = current_affinity();
 	CHECK(CPU_EQUAL(&before, &after));
+}
+
+TEST_CASE("COPYLIB_WG_SIZE overrides the work-group size of the copy kernels", "[executor]") {
+	unsetenv("COPYLIB_WG_SIZE");
+	CHECK(make_executor().get_preferred_wg_size() > 0);
+
+	const scoped_env wg_size("COPYLIB_WG_SIZE", "48");
+	CHECK(make_executor().get_preferred_wg_size() == 48);
+}
+
+TEST_CASE("an invalid COPYLIB_WG_SIZE is reported as copylib::error", "[executor][error]") {
+	// empty, malformed, zero, which would divide by zero when sizing the kernels, negative, and beyond int32_t
+	for(const char* size : {"", "x", "64x", " 64", "0", "-32", "4294967296"}) {
+		CAPTURE(size);
+		const scoped_env set("COPYLIB_WG_SIZE", size);
+		CHECK_THROWS_AS(make_executor(), copylib::error);
+	}
 }
 
 TEST_CASE("failed checks throw copylib::error", "[executor][error]") {

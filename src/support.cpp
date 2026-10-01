@@ -8,8 +8,8 @@
 namespace std {
 
 size_t hash<copylib::data_layout>::operator()(const copylib::data_layout& layout) const {
-	return copylib::utils::hash_args(layout.base, layout.d0_stride, layout.d1_stride, layout.d0_start_offset, layout.d1_start_offset,
-	    layout.d2_start_offset, layout.d0_end_offset, layout.d1_end_offset, layout.d2_end_offset, layout.start, layout.end);
+	return copylib::utils::hash_args(layout.base, layout.d0_stride, layout.d1_stride, layout.d0_start_offset, layout.d1_start_offset, layout.d2_start_offset,
+	    layout.d0_end_offset, layout.d1_end_offset, layout.d2_end_offset, layout.start, layout.end);
 }
 
 size_t hash<copylib::copy_properties>::operator()(const copylib::copy_properties& prop) const { //
@@ -57,8 +57,9 @@ format_context::iterator formatter<copylib::staging_id>::format(const copylib::s
 format_context::iterator formatter<copylib::data_layout>::format(const copylib::data_layout& p, format_context& ctx) const {
 	const std::string addr =
 	    p.is_unplaced_staging() ? copylib::utils::format("{}", p.staging) : copylib::utils::format("{:p}", reinterpret_cast<void*>(p.base));
-	return formatter<std::string>::format(copylib::utils::format("{{{} [{}x{}] d0:[{},{}) d1:[{},{}) d2:[{},{}) win:[{},{})}}", addr, p.d0_stride,
-	    p.d1_stride, p.d0_start_offset, p.d0_end_offset, p.d1_start_offset, p.d1_end_offset, p.d2_start_offset, p.d2_end_offset, p.start, p.end),
+	return formatter<std::string>::format(
+	    copylib::utils::format("{{{} [{}x{}] d0:[{},{}) d1:[{},{}) d2:[{},{}) win:[{},{})}}", addr, p.d0_stride, p.d1_stride, p.d0_start_offset,
+	        p.d0_end_offset, p.d1_start_offset, p.d1_end_offset, p.d2_start_offset, p.d2_end_offset, p.start, p.end),
 	    ctx);
 }
 

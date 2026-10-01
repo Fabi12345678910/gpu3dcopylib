@@ -16,7 +16,7 @@
 //
 // Hashes: equal values hash equal, and changing any single field changes the hash. The window is part of a layout's
 // identity, so a hash ignoring start and end would give every chunk of a spec the same hash. Every "equal" check is
-// paired with a "different" one, since the placeholders return the same value for everything.
+// paired with a "different" one, since a hash returning the same value for everything passes every "equal" check.
 //
 // Formatting: the enum-like types keep their exact 2D output. The 3D data_layout format is not fixed yet, so only its
 // properties are checked: it is not empty, it shows the base address or the staging id, and different layouts print
@@ -61,8 +61,8 @@ std::vector<data_layout> single_field_changes() {
 TEST_CASE("layouts hash by all of their fields, window included", "[support][hash]") {
 	CHECK(hash_of(ref::fields()) == hash_of(ref::fields()));
 
-	const char* field_names[] = {"base", "d0_stride", "d1_stride", "d0_start_offset", "d1_start_offset", "d2_start_offset", "d0_end_offset",
-	    "d1_end_offset", "d2_end_offset", "start", "end"};
+	const char* field_names[] = {"base", "d0_stride", "d1_stride", "d0_start_offset", "d1_start_offset", "d2_start_offset", "d0_end_offset", "d1_end_offset",
+	    "d2_end_offset", "start", "end"};
 	const auto changed = single_field_changes();
 	for(size_t i = 0; i < changed.size(); ++i) {
 		INFO("changed field: " << field_names[i]);

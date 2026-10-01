@@ -6,9 +6,6 @@
 
 namespace copylib::detail {
 
-// Directly using CUDA threadIdx.x does NOT actually change performance
-#define INDEX_X idx.get_global_id(0)
-
 // One side of a copy counted in elements of the kernel's type, which divides every extent, stride and offset.
 template <typename IdxType>
 struct element_layout {
@@ -46,7 +43,7 @@ sycl::event copy_with_kernel_impl(sycl::queue& q, const copy_spec& spec, IdxType
 	const size_t wg_size = preferred_wg_size;
 	const sycl::nd_range<1> ndr{(static_cast<size_t>(extent) + wg_size - 1) / wg_size * wg_size, wg_size};
 	return q.parallel_for(ndr, [=](sycl::nd_item<1> idx) {
-		const IdxType i = INDEX_X;
+		const IdxType i = idx.get_global_id(0);
 		if(i >= extent) { return; }
 		tgt[tgt_layout.offset_at(tgt_start + i)] = src[src_layout.offset_at(src_start + i)];
 	});
@@ -68,9 +65,11 @@ sycl::event copy_with_kernel_impl(sycl::queue& q, const copy_spec& spec, int32_t
 
 sycl::event copy_with_kernel(sycl::queue& q, const copy_spec& spec, int32_t preferred_wg_size) {
 	// the widest element that tiles both windows: copy_alignment covers the rows, strides and offsets of both sides and the
-	// shift between the windows, which leaves the window's own start and length, as chunks may start and end unaligned
+	// shift between the windows, which leaves the window's own start and length, as chunks may start and end unaligned, and
+	// both bases, which planning does not know
 	int64_t elem_size = copy_alignment(spec);
-	while(spec.source_layout.start % elem_size != 0 || spec.source_layout.window_length() % elem_size != 0) {
+	while(spec.source_layout.start % elem_size != 0 || spec.source_layout.window_length() % elem_size != 0 || spec.source_layout.base % elem_size != 0
+	      || spec.target_layout.base % elem_size != 0) {
 		elem_size /= 2;
 	}
 	switch(elem_size) {

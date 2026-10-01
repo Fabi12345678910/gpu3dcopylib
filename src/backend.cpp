@@ -24,7 +24,7 @@ std::string executor::get_sycl_impl_name() const {
 #if defined(SIMSYCL_VERSION)
 	return "SimSYCL";
 #elif defined(__ADAPTIVECPP__)
-	std::string ret = "AdaptiveCPP";
+	std::string ret = "AdaptiveCpp";
 #if defined(__ACPP_ENABLE_CUDA_TARGET__)
 	ret += " (CUDA)";
 #endif // __ACPP_ENABLE_CUDA_TARGET__
@@ -41,7 +41,7 @@ bool executor::is_device_to_device_copy_available() const {
 	return true;
 #elif defined(__ADAPTIVECPP__)
 #if defined(__ACPP_ENABLE_CUDA_TARGET__)
-	return true; // CUDA emulates p2p transfers even if ont available
+	return true; // CUDA emulates p2p transfers even if not available
 #else
 	return false; // assumption for now
 #endif
@@ -55,23 +55,7 @@ bool executor::is_device_to_device_copy_available() const {
 
 bool executor::is_peer_memory_access_available() const { return peer_access_available; }
 
-int32_t executor::get_preferred_wg_size() const {
-	thread_local int32_t wg_size = -1;
-	if(wg_size == -1) {
-		auto env_str = std::getenv("COPYLIB_WG_SIZE");
-		if(env_str) {
-			wg_size = std::stoi(env_str);
-		} else {
-			if(devices.empty()) { return 32; }
-			if(devices.front().dev.get_info<sycl::info::device::vendor>().find("Intel") != std::string::npos) {
-				wg_size = 128;
-			} else {
-				wg_size = 32;
-			}
-		}
-	}
-	return wg_size;
-}
+int32_t executor::get_preferred_wg_size() const { return preferred_wg_size; }
 
 std::optional<int> get_cpu_for_gpu_alloc(int gpu_idx, size_t total_gpu_count) {
 	constexpr int max_gpu_idx = static_cast<int>(device_id::count);
@@ -85,8 +69,8 @@ std::optional<int> get_cpu_for_gpu_alloc(int gpu_idx, size_t total_gpu_count) {
 	const auto& cpu_id = cpu_ids_split[gpu_idx];
 	int cpu = -1;
 	const auto [end, error] = std::from_chars(cpu_id.data(), cpu_id.data() + cpu_id.size(), cpu);
-	COPYLIB_ENSURE(error == std::errc{} && end == cpu_id.data() + cpu_id.size() && cpu >= 0 && cpu < CPU_SETSIZE,
-	    "Invalid CPU ID in COPYLIB_ALLOC_CPU_IDS: '{}'", cpu_id);
+	COPYLIB_ENSURE(
+	    error == std::errc{} && end == cpu_id.data() + cpu_id.size() && cpu >= 0 && cpu < CPU_SETSIZE, "Invalid CPU ID in COPYLIB_ALLOC_CPU_IDS: '{}'", cpu_id);
 	return cpu;
 }
 
@@ -183,6 +167,17 @@ namespace {
 		return with_default_contexts(gpu_devices);
 	}
 
+	// COPYLIB_WG_SIZE if set, otherwise a default for the vendor of the first device
+	int32_t read_preferred_wg_size(const sycl::device& first_device) {
+		const auto env_var = std::getenv("COPYLIB_WG_SIZE");
+		if(env_var == nullptr) { return first_device.get_info<sycl::info::device::vendor>().find("Intel") != std::string::npos ? 128 : 32; }
+		const auto env_end = env_var + std::strlen(env_var);
+		int32_t wg_size = 0;
+		const auto [end, error] = std::from_chars(env_var, env_end, wg_size);
+		COPYLIB_ENSURE(error == std::errc{} && end == env_end && wg_size > 0, "Invalid work-group size in COPYLIB_WG_SIZE: '{}'", env_var);
+		return wg_size;
+	}
+
 } // namespace
 
 executor::executor(int64_t buffer_size) : executor(buffer_size, sycl::device::get_devices(sycl::info::device_type::gpu).size(), 1) {}
@@ -203,6 +198,7 @@ executor::executor(int64_t buffer_size, const std::vector<std::pair<sycl::device
 		COPYLIB_ENSURE(std::find(context_devices.begin(), context_devices.end(), device) != context_devices.end(),
 		    "Device {} is not part of the context given with it", device.get_info<sycl::info::device::name>());
 	}
+	preferred_wg_size = read_preferred_wg_size(device_contexts.front().first);
 
 	// restores the calling thread's affinity however the constructor is left, so a failed check cannot leave it pinned
 	struct affinity_guard {
@@ -215,11 +211,14 @@ executor::executor(int64_t buffer_size, const std::vector<std::pair<sycl::device
 	};
 	std::optional<affinity_guard> restore_affinity; // only once something is pinned
 
+	COPYLIB_ENSURE(buffer_size > 0, "Invalid buffer size: {} (needs to be > 0)", buffer_size);
 	// a whole number of alignments, which aligned allocations require on some implementations; reported as the buffer size
 	this->buffer_size = (buffer_size + detail::staging_alignment - 1) / detail::staging_alignment * detail::staging_alignment;
 	const auto staging_bytes = static_cast<size_t>(this->buffer_size);
 	// one slice per worker, each placing the staging of the plan it runs at the start of its own slice
 	staging_slice_size = this->buffer_size / static_cast<int64_t>(pool.get_thread_count()) / detail::staging_alignment * detail::staging_alignment;
+	COPYLIB_ENSURE(staging_slice_size > 0, "Buffer size {} leaves less than {} bytes of staging for each of the {} workers", this->buffer_size,
+	    detail::staging_alignment, pool.get_thread_count());
 
 	// rethrows asynchronous errors from wait_and_throw, so that they are reported like any other failure; SYCL's default
 	// handler would terminate the process instead
@@ -235,7 +234,7 @@ executor::executor(int64_t buffer_size, const std::vector<std::pair<sycl::device
 		const sycl::property_list queue_properties = {
 		    sycl::property::queue::in_order{},
 #ifdef ACPP_EXT_COARSE_GRAINED_EVENTS
-		    // minor perf improvement on AdaptiveCPP
+		    // minor perf improvement on AdaptiveCpp
 		    sycl::property::queue::AdaptiveCpp_coarse_grained_events{},
 #endif // ACPP_EXT_COARSE_GRAINED_EVENTS
 #ifdef SYCL_EXT_INTEL_QUEUE_IMMEDIATE_COMMAND_LIST
@@ -262,8 +261,8 @@ executor::executor(int64_t buffer_size, const std::vector<std::pair<sycl::device
 			cpu_set_t mask_for_device;
 			CPU_ZERO(&mask_for_device);
 			CPU_SET(*dev.host_staging_cpu, &mask_for_device);
-			COPYLIB_ENSURE(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &mask_for_device) == 0, "Failed to set CPU affinity to CPU {} for device {}",
-			    *dev.host_staging_cpu, dev_id);
+			COPYLIB_ENSURE(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &mask_for_device) == 0,
+			    "Failed to set CPU affinity to CPU {} for device {}", *dev.host_staging_cpu, dev_id);
 		}
 
 		dev.host_staging_buffer = sycl::aligned_alloc_host<std::byte>(detail::staging_alignment, staging_bytes, q);
@@ -279,7 +278,7 @@ detail::device::device(sycl::device dev, const std::vector<sycl::queue>& queues)
 
 detail::device::~device() {
 	for(auto& q : queues) {
-		q.wait(); // don't throw in the deconstructor
+		q.wait(); // don't throw in the destructor
 	}
 
 	auto& q = queues[0];
@@ -315,21 +314,15 @@ int64_t executor::get_queues_per_device() const { return devices.front().queues.
 namespace detail {
 
 	step_result execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx, bool alternate_device, step_result last) {
-		constexpr bool debug = false;
 		const executor::target last_target = last.target;
 		const device_id last_device = last_target.did;
-		if(debug) utils::err_print("{}:\n  -> last_device is {}\n", spec, last_device);
 
 		const auto& source = spec.source_layout;
 		const auto& target_layout = spec.target_layout;
 
 		//  for host <-> host copies, use memcpy
 		if(spec.source_device == device_id::host && spec.target_device == device_id::host) {
-			if(debug) utils::err_print("  -> h2h\n");
-			if(last_device != device_id::host && last_device != device_id::count) {
-				if(debug) utils::err_print("  -> waiting on {}\n", last_device);
-				last.event.wait_and_throw();
-			}
+			if(last_device != device_id::host && last_device != device_id::count) { last.event.wait_and_throw(); }
 			for_each_copy_run(spec, [&](int64_t source_offset, int64_t target_offset, int64_t length) {
 				std::memcpy(target_layout.base_ptr() + target_offset, source.base_ptr() + source_offset, length);
 			});
@@ -341,18 +334,14 @@ namespace detail {
 		const device_id device_to_use = desired_device == device_id::host ? fallback_device : desired_device;
 		const executor::target target{device_to_use, queue_idx};
 
-		if(debug) utils::err_print("  -> performing copy on queue for device {}\n", device_to_use);
-		if(last_target != target && last_device != device_id::count && last_device != device_id::host) {
-			if(debug) utils::err_print("  -> waiting on {}\n", last_device);
-			last.event.wait_and_throw();
-		}
+		if(last_target != target && last_device != device_id::count && last_device != device_id::host) { last.event.wait_and_throw(); }
 
 		auto& queue = exec.get_queue(target);
 
 		// if the source and target are contiguous, we can use a single copy operation
 		if(source.is_window_contiguous() && target_layout.is_window_contiguous()) {
-			return {target, queue.copy(source.base_ptr() + source.offset_at(source.start), target_layout.base_ptr() + target_layout.offset_at(target_layout.start),
-			                    source.window_length())};
+			return {target, queue.copy(source.base_ptr() + source.offset_at(source.start),
+			                    target_layout.base_ptr() + target_layout.offset_at(target_layout.start), source.window_length())};
 		}
 
 		// technically, one could use a kernel for copies involving the host on some hw/sw stacks, but we'll ignore that for now
@@ -370,7 +359,7 @@ namespace detail {
 	staging_fulfiller::staging_fulfiller(executor& exec, int64_t slice) : exec(exec), slice_offset(slice * exec.get_staging_slice_size()) {}
 
 	void staging_fulfiller::fulfill(data_layout& layout) {
-		if(!layout.is_unplaced_staging()) {return;}
+		if(!layout.is_unplaced_staging()) { return; }
 		const auto staging_idx = layout.staging.index;
 		auto staging_it = staging_buffers.find(staging_idx);
 		if(staging_it == staging_buffers.end()) {
@@ -378,20 +367,21 @@ namespace detail {
 			const bool host = layout.staging.on_host;
 			COPYLIB_ENSURE(did != device_id::host, "Device id for staging cannot be host");
 			staging_info info{
-				.size = layout.window_length(),
-				.device = did,
-				.on_host = host,
+			    .size = layout.window_length(),
+			    .device = did,
+			    .on_host = host,
 			};
 			if(host) {
 				info.buffer = exec.get_host_staging_buffer(did) + slice_offset + current_host_staging_offsets[static_cast<size_t>(did)];
 				current_host_staging_offsets[static_cast<size_t>(did)] += (info.size + staging_alignment - 1) / staging_alignment * staging_alignment;
 				COPYLIB_ENSURE(current_host_staging_offsets[static_cast<size_t>(did)] <= exec.get_staging_slice_size(),
-					"Staging buffer overflow on host for device {}: a plan needs more than a worker's {} bytes", static_cast<int>(did), exec.get_staging_slice_size());
+				    "Staging buffer overflow on host for device {}: a plan needs more than a worker's {} bytes", static_cast<int>(did),
+				    exec.get_staging_slice_size());
 			} else {
 				info.buffer = exec.get_staging_buffer(did) + slice_offset + current_staging_offsets[static_cast<size_t>(did)];
 				current_staging_offsets[static_cast<size_t>(did)] += (info.size + staging_alignment - 1) / staging_alignment * staging_alignment;
 				COPYLIB_ENSURE(current_staging_offsets[static_cast<size_t>(did)] <= exec.get_staging_slice_size(),
-					"Staging buffer overflow for device {}: a plan needs more than a worker's {} bytes", static_cast<int>(did), exec.get_staging_slice_size());
+				    "Staging buffer overflow for device {}: a plan needs more than a worker's {} bytes", static_cast<int>(did), exec.get_staging_slice_size());
 			}
 			staging_it = staging_buffers.emplace(staging_idx, info).first;
 		} else {

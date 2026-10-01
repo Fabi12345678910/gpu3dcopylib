@@ -39,7 +39,8 @@ TEST_CASE("a direct strategy leaves the spec as it is", "[staging]") {
 	std::vector<staging_request> log;
 	const auto spec = ref::spec();
 
-	const auto plan = apply_staging(spec, strategy_from_fields(copy_type::direct, copy_properties::none, d2d_implementation::direct, 0), recording_provider(log));
+	const auto plan =
+	    apply_staging(spec, strategy_from_fields(copy_type::direct, copy_properties::none, d2d_implementation::direct, 0), recording_provider(log));
 
 	REQUIRE(plan.size() == 1);
 	CHECK(same_spec(plan.front(), spec));
@@ -47,7 +48,8 @@ TEST_CASE("a direct strategy leaves the spec as it is", "[staging]") {
 }
 
 TEST_CASE("nothing is staged when both windows are contiguous", "[staging]") {
-	const auto [src, tgt] = GENERATE(device_pair{device_id::d0, device_id::d1}, device_pair{device_id::host, device_id::d1}, device_pair{device_id::d0, device_id::host});
+	const auto [src, tgt] =
+	    GENERATE(device_pair{device_id::d0, device_id::d1}, device_pair{device_id::host, device_id::d1}, device_pair{device_id::d0, device_id::host});
 	CAPTURE(src, tgt);
 
 	SECTION("contiguous boxes") {
@@ -83,7 +85,8 @@ TEST_CASE("host-to-host copies are never staged", "[staging]") {
 }
 
 TEST_CASE("a strided source is gathered on its own device", "[staging]") {
-	const auto [src, tgt] = GENERATE(device_pair{device_id::d0, device_id::d1}, device_pair{device_id::d0, device_id::host}, device_pair{device_id::host, device_id::d1});
+	const auto [src, tgt] =
+	    GENERATE(device_pair{device_id::d0, device_id::d1}, device_pair{device_id::d0, device_id::host}, device_pair{device_id::host, device_id::d1});
 	CAPTURE(src, tgt);
 	std::vector<staging_request> log;
 	const auto spec = spec_from_fields(src, ref::fields(), tgt, contiguous(0x80000));
@@ -112,7 +115,8 @@ TEST_CASE("a strided source is gathered on its own device", "[staging]") {
 }
 
 TEST_CASE("a strided target is scattered on its own device", "[staging]") {
-	const auto [src, tgt] = GENERATE(device_pair{device_id::d0, device_id::d1}, device_pair{device_id::host, device_id::d1}, device_pair{device_id::d0, device_id::host});
+	const auto [src, tgt] =
+	    GENERATE(device_pair{device_id::d0, device_id::d1}, device_pair{device_id::host, device_id::d1}, device_pair{device_id::d0, device_id::host});
 	CAPTURE(src, tgt);
 	std::vector<staging_request> log;
 	const auto spec = spec_from_fields(src, contiguous(0x10000), tgt, ref::fields(0x80000));
@@ -141,7 +145,8 @@ TEST_CASE("a strided target is scattered on its own device", "[staging]") {
 }
 
 TEST_CASE("strided on both ends is gathered then crossed once contiguously then scattered", "[staging]") {
-	const auto [src, tgt] = GENERATE(device_pair{device_id::d0, device_id::d1}, device_pair{device_id::host, device_id::d1}, device_pair{device_id::d0, device_id::host});
+	const auto [src, tgt] =
+	    GENERATE(device_pair{device_id::d0, device_id::d1}, device_pair{device_id::host, device_id::d1}, device_pair{device_id::d0, device_id::host});
 	CAPTURE(src, tgt);
 	std::vector<staging_request> log;
 	const auto spec = spec_from_fields(src, ref::fields(), tgt, shapes::six_rows_of_48(0x80000));

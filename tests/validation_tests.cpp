@@ -17,11 +17,9 @@ using copylib_testing::with_window_fields;
 namespace ref = copylib_testing::reference_box;
 namespace shapes = copylib_testing::shapes;
 
-TEST_CASE("a well-formed layout is valid", "[validation]") {
-	CHECK(is_valid(ref::fields()));
-}
+TEST_CASE("a well-formed layout is valid", "[validation]") { CHECK(is_valid(ref::fields())); }
 
-TEST_CASE("strides must be non-zero", "[validation]") {
+TEST_CASE("strides must be positive", "[validation]") {
 	CHECK(is_valid(ref::fields()));
 
 	auto no_d0 = ref::fields();
@@ -110,17 +108,13 @@ TEST_CASE("the window must lie within the box", "[validation][window]") {
 		CHECK_FALSE(is_valid(layout));
 	}
 
-	SECTION("a sub-window of the box is valid") {
-		CHECK(is_valid(with_window_fields(ref::fields(), ref::row_extent, 2 * ref::row_extent)));
-	}
+	SECTION("a sub-window of the box is valid") { CHECK(is_valid(with_window_fields(ref::fields(), ref::row_extent, 2 * ref::row_extent))); }
 }
 
 TEST_CASE("a copy spec requires equal window lengths on both sides", "[validation]") {
 	const auto source = ref::fields();
 
-	SECTION("equal windows are valid") {
-		CHECK(is_valid(spec_from_fields(device_id::d0, source, device_id::d1, ref::fields(0x80000))));
-	}
+	SECTION("equal windows are valid") { CHECK(is_valid(spec_from_fields(device_id::d0, source, device_id::d1, ref::fields(0x80000)))); }
 
 	SECTION("differing window lengths are not") {
 		auto target = ref::fields(0x80000);

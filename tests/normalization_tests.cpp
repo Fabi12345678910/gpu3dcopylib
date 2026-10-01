@@ -62,7 +62,7 @@ TEST_CASE("each row of a normalized box is a maximal contiguous run", "[normaliz
 TEST_CASE("normalization is idempotent", "[normalization]") {
 	for(const auto& layout : full_window_layouts()) {
 		const auto once = normalize(layout);
-		// without this, a placeholder returning an empty layout would pass: normalize({}) == {}
+		// without this, a normalize returning an empty layout would pass: normalize({}) == {}
 		REQUIRE(first_difference(reference_offsets(once), reference_offsets(layout)) == -1);
 		CHECK(same_fields(normalize(once), once));
 	}
@@ -85,9 +85,7 @@ TEST_CASE("a single run normalizes to the 1D form", "[normalization]") {
 }
 
 TEST_CASE("evenly spaced runs normalize to the 2D form", "[normalization]") {
-	SECTION("one run per plane") {
-		CHECK(same_fields(normalize(shapes::full_rows_of_three_planes()), uniform_runs(ref::base, 2800, 320, 3, 1280)));
-	}
+	SECTION("one run per plane") { CHECK(same_fields(normalize(shapes::full_rows_of_three_planes()), uniform_runs(ref::base, 2800, 320, 3, 1280))); }
 
 	SECTION("partial rows continuing across a plane boundary") {
 		// no two rows are adjacent, but a plane is exactly 16 rows, so all 32 rows are spaced 80 bytes apart
@@ -105,13 +103,13 @@ TEST_CASE("the normal form is unique", "[normalization]") {
 	// different encodings of the same bytes normalize to identical fields
 
 	SECTION("a single row, encoded with three different sets of strides") {
-		const auto in_allocation = shapes::single_row();                                     // 80 byte rows, 16 per plane
-		const auto tight = layout_from_fields(ref::base, 40, 2, 16, 0, 0, 40, 1, 1, 0, 24);   // 40 byte rows, 2 per plane
-		const auto already_normal = one_run(ref::base, 16, 24);                              // the normal form itself
+		const auto in_allocation = shapes::single_row();                                    // 80 byte rows, 16 per plane
+		const auto tight = layout_from_fields(ref::base, 40, 2, 16, 0, 0, 40, 1, 1, 0, 24); // 40 byte rows, 2 per plane
+		const auto already_normal = one_run(ref::base, 16, 24);                             // the normal form itself
 
 		CHECK(same_fields(normalize(in_allocation), normalize(tight)));
 		CHECK(same_fields(normalize(tight), normalize(already_normal)));
-		// comparing two normalized results alone would pass for a placeholder returning {} both times
+		// comparing two normalized results alone would pass for a normalize returning {} both times
 		CHECK(same_fields(normalize(in_allocation), already_normal));
 	}
 

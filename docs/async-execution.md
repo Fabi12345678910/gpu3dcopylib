@@ -191,7 +191,7 @@ Without blocking, the offset allocator hands out live buffers. Celerity's alloca
 
 ### 6. Flush after submitting
 
-This is invisible today because every call blocks. With a polled handle on AdaptiveCpp, an unflushed queue may never start work. Adopt Celerity's `flush()` workaround.
+The 2D library never notices, because every call blocks. With a polled handle on AdaptiveCpp, an unflushed queue may never start work. The workers here avoid it: each waits for the last step of its plan, and waiting flushes everything submitted before it. A design that returns without waiting, such as polling events (option B), needs Celerity's `flush()` workaround.
 
 ### 7. Benchmark against Celerity's CUDA backend
 
@@ -240,9 +240,9 @@ particular, [consequence 3](#3-take-device-and-lane-as-parameters) makes caller-
 | --- | --- |
 | Handle | **Option C.** `execute_copy` hands the plans to worker threads and returns immediately. Workers block between steps as in the 2D library, and the handle tracks their completion. |
 | Waiting | The handle has a blocking `wait()` next to the non-blocking `is_complete()`. Tests and benchmarks wait; a Celerity adapter would only poll. |
-| Thread pool | `BS::thread_pool`, as in the 2D library, but owned by the executor rather than a function-local `static`. It still has to be added as a dependency. |
+| Thread pool | `BS::light_thread_pool` from BS::thread_pool 5.0.0, vendored in `vendor/` as in the 2D library, but owned by the executor rather than a function-local `static`. |
 | Queues | The executor creates and owns its in-order queues, as in the 2D library, but on the devices and in the contexts the caller passes as (device, context) pairs. |
-| Staging lifetime | Each staging buffer is divided into one slice per pool worker (`get_staging_slice_size()`, i.e. `buffer_size / queues_per_device`). A worker places the staging of the plan it runs at the start of its own slice, fresh for every plan; it runs one plan at a time and waits for it, so the slice is free again, and no other worker uses it. Calls in flight together therefore never share staging, and a chunked copy may stage more than `buffer_size` in total. Every plan has to fit into one slice, which `execute_copy` checks before returning. Chosen over an allocator that releases staging per call or per plan, which would use the memory better but needs all-or-nothing reservations and workers waiting for memory. |
+| Staging lifetime | Each staging buffer is divided into one slice per pool worker (`get_staging_slice_size()`, i.e. `buffer_size / queues_per_device` rounded down to the 128-byte staging alignment; the constructor rejects a buffer that leaves a worker nothing). A worker places the staging of the plan it runs at the start of its own slice, fresh for every plan; it runs one plan at a time and waits for it, so the slice is free again, and no other worker uses it. Calls in flight together therefore never share staging, and a chunked copy may stage more than `buffer_size` in total. Every plan has to fit into one slice, which `execute_copy` checks before returning. Chosen over an allocator that releases staging per call or per plan, which would use the memory better but needs all-or-nothing reservations and workers waiting for memory. |
 | Error handling | Every failure throws `copylib::error`: invalid input, broken internal invariants and resource failures alike, so `COPYLIB_ENSURE` throws instead of calling `std::exit`. A failure inside a worker cannot reach the caller as an exception and is reported as a message through `copy_handle::error()` instead. The executor's queues get an async handler that rethrows, so that asynchronous SYCL errors reach that report instead of the default handler, which terminates. |
 
 Compared with the analysis above, this leaves out three things for now, all motivated by Celerity: polling events
@@ -252,7 +252,7 @@ panics instead. Keeping queue selection behind one function in the executor leav
 
 ## Proposed interface
 
-Implemented in `src/backend.cpp` as proposed here.
+Declared in `include/copylib/backend.hpp` and implemented in `src/backend.cpp` as proposed here.
 
 ```cpp
 namespace copylib {
@@ -301,7 +301,7 @@ handle.wait();
 if(const auto error = handle.error()) { copylib::utils::err_print("copy failed: {}\n", *error); }
 ```
 
-The per-spec `execute_copy` overload becomes a synchronous building block in `detail`, run by the workers; the per-plan one is gone.
+The per-spec `execute_copy` overload becomes a building block in `detail`, run by the workers: it submits one step and returns its event, waiting only for a previous step that ran on another queue. The per-plan one is gone.
 Only `execute_copy` creates handles, so there is no public constructor and no empty handle.
 
 ### Handle details

@@ -40,9 +40,7 @@ std::vector<int64_t> chunk_lengths(const parallel_copy_set& set) {
 	return lengths;
 }
 
-copy_spec reshaping_spec() {
-	return spec_from_fields(device_id::d0, shapes::one_row_of_six(0x10000), device_id::d1, shapes::two_rows_of_three(0x20000));
-}
+copy_spec reshaping_spec() { return spec_from_fields(device_id::d0, shapes::one_row_of_six(0x10000), device_id::d1, shapes::two_rows_of_three(0x20000)); }
 
 } // namespace
 
@@ -123,9 +121,7 @@ TEST_CASE("chunk boundaries are aligned", "[chunking]") {
 }
 
 TEST_CASE("chunks are as large as alignment permits", "[chunking]") {
-	SECTION("perfectly divisible") {
-		CHECK(chunk_lengths(apply_chunking(ref::spec(), chunking_strategy(96))) == std::vector<int64_t>{96, 96, 96});
-	}
+	SECTION("perfectly divisible") { CHECK(chunk_lengths(apply_chunking(ref::spec(), chunking_strategy(96))) == std::vector<int64_t>{96, 96, 96}); }
 
 	SECTION("with a remainder, which goes into the last chunk") {
 		CHECK(chunk_lengths(apply_chunking(ref::spec(), chunking_strategy(64))) == std::vector<int64_t>{64, 64, 64, 64, 32});
@@ -223,12 +219,8 @@ TEST_CASE("the alignment accounts for every term on both sides", "[chunking][ali
 	const auto on_both = [](const data_layout& l) { return spec_from_fields(device_id::d0, l, device_id::d1, l); };
 	REQUIRE(copy_alignment(on_both(clean)) == 64);
 
-	SECTION("row extent") {
-		CHECK(copy_alignment(on_both(layout_from_fields(0x10000, 64, 4, 0, 0, 0, 48, 4, 1, 0, 192))) == 16);
-	}
-	SECTION("d0_stride") {
-		CHECK(copy_alignment(on_both(layout_from_fields(0x10000, 96, 4, 0, 0, 0, 64, 4, 1, 0, 256))) == 32);
-	}
+	SECTION("row extent") { CHECK(copy_alignment(on_both(layout_from_fields(0x10000, 64, 4, 0, 0, 0, 48, 4, 1, 0, 192))) == 16); }
+	SECTION("d0_stride") { CHECK(copy_alignment(on_both(layout_from_fields(0x10000, 96, 4, 0, 0, 0, 64, 4, 1, 0, 256))) == 32); }
 	SECTION("d0_start_offset, on either side alone") {
 		// every row starts 4 bytes past a 64-byte boundary
 		const auto at_4 = layout_from_fields(0x20000, 128, 4, 4, 0, 0, 68, 4, 1, 0, 256);
@@ -242,9 +234,7 @@ TEST_CASE("the alignment accounts for every term on both sides", "[chunking][ali
 		// only the first and last chunk are ragged then, interior boundaries stay aligned on both sides
 		CHECK(copy_alignment(spec_from_fields(device_id::d0, with_window_fields(clean, 3, 256), device_id::d1, with_window_fields(clean, 3, 256))) == 64);
 	}
-	SECTION("odd rows fall back to single bytes") {
-		CHECK(copy_alignment(on_both(layout_from_fields(0x10000, 9, 4, 0, 0, 0, 9, 4, 1, 0, 36))) == 1);
-	}
+	SECTION("odd rows fall back to single bytes") { CHECK(copy_alignment(on_both(layout_from_fields(0x10000, 9, 4, 0, 0, 0, 9, 4, 1, 0, 36))) == 1); }
 }
 
 TEST_CASE("chunking rejects an invalid spec", "[chunking][error]") {

@@ -4,6 +4,7 @@
 #include <copylib/core.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -22,6 +23,7 @@
 
 using namespace copylib;
 using namespace copylib_testing;
+using Catch::Matchers::ContainsSubstring;
 namespace ref = copylib_testing::reference_box;
 
 namespace {
@@ -213,22 +215,24 @@ TEST_CASE("dropping the handle and destroying the executor still completes the c
 	CHECK(outcome.correct());
 }
 
-TEST_CASE("a failing copy is reported, not lost", "[execution][handle][error]") {
-	// a natural failure: 288 bytes of staging do not fit into 128 bytes of staging memory
-	configure_test_system();
-	executor exec(128, test_devices(2), 2);
+TEST_CASE("a plan failing in its worker is reported through the handle while the others complete", "[execution][handle][error]") {
+	// a natural failure inside a worker: the plan names a device the executor does not have, which no check on the
+	// caller's thread looks at; its memory is pageable, so that nothing touches device memory should it run anyway
+	auto exec = make_executor();
+	const prepared_copy unknown(exec, pageable_host, ref::fields(), pageable_host, ref::fields());
+	auto failing = unknown.spec();
+	failing.source_device = failing.target_device = device_id::d5;
 	const prepared_copy copy(exec, on_device(device_id::d0), ref::fields(), on_device(device_id::d1), ref::fields());
 
-	// depending on where the overflow is detected, it throws from the call or arrives through the handle
-	bool reported = false;
-	try {
-		const auto handle = launch(exec, copy, staged_strategy);
-		handle.wait();
-		CHECK(handle.is_complete());
-		reported = handle.error().has_value();
-	} catch(const copylib::error&) { reported = true; }
+	const auto handle = execute_copy(exec, parallel_copy_set{copy_plan{failing}, copy_plan{copy.spec()}});
+	handle.wait();
 
-	CHECK(reported);
+	CHECK(handle.is_complete());
+	REQUIRE(handle.error().has_value());
+	CHECK_THAT(*handle.error(), ContainsSubstring("Invalid device id"));
+	const auto outcome = copy.verify(std::nullopt);
+	INFO(outcome.describe());
+	CHECK(outcome.correct());
 }
 
 TEST_CASE("execute_copy rejects an invalid set", "[execution][error]") {

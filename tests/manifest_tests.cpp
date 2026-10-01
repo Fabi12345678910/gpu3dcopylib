@@ -16,8 +16,8 @@
 //
 // Every combination of copy type, properties, d2d implementation and chunk size runs on a set of named specs, then on
 // randomly generated ones, and each result is checked against the oracle and the pipeline's invariants. Failures are
-// counted and only the first per invariant is reported, so an unimplemented pipeline cannot flood the CI log. Specs and
-// strategies are described by hand rather than through the formatters, so the reports are readable before layer 8.
+// counted and only the first per invariant is reported, so a broken pipeline cannot flood the CI log. Specs and
+// strategies are described by hand rather than through the formatters, so the reports do not depend on layer 8.
 
 using namespace copylib;
 using namespace copylib_testing;
@@ -107,8 +107,10 @@ struct named_spec {
 };
 
 std::vector<named_spec> named_specs() {
-	const auto shifted = spec_from_fields(device_id::d0, with_window_fields(ref::fields(), 0, 280), device_id::d1, with_window_fields(ref::fields(0x80000), 8, 288));
-	const auto partial = spec_from_fields(device_id::d0, with_window_fields(ref::fields(), 3, 285), device_id::d2, with_window_fields(ref::fields(0x80000), 3, 285));
+	const auto shifted =
+	    spec_from_fields(device_id::d0, with_window_fields(ref::fields(), 0, 280), device_id::d1, with_window_fields(ref::fields(0x80000), 8, 288));
+	const auto partial =
+	    spec_from_fields(device_id::d0, with_window_fields(ref::fields(), 3, 285), device_id::d2, with_window_fields(ref::fields(0x80000), 3, 285));
 	return {
 	    {"reference box d0 -> d1", ref::spec()},
 	    {"reference box host -> d1", spec_from_fields(device_id::host, ref::fields(), device_id::d1, ref::fields(0x80000))},
@@ -200,7 +202,7 @@ TEST_CASE("manifest_strategy chains normalization, chunking, staging and the d2d
 	const auto chained =
 	    apply_d2d_implementation(apply_staging(apply_chunking(normalize(spec), strategy), strategy, chain_provider), strategy.d2d, chain_provider);
 
-	// without this, two placeholders returning an empty set would compare equal
+	// without this, two pipelines that both return an empty set would compare equal
 	REQUIRE_FALSE(manifested.empty());
 	CHECK(same_set(manifested, chained));
 }

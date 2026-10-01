@@ -8,7 +8,8 @@ implementation in the future.
 
 Test cases covering functions that are not implemented yet are tagged `[!mayfail]`. Catch2 runs them and reports their
 failures, but they do not fail the build, so CI stays green and the failure count shrinks as the implementation lands.
-The CI workflow writes the totals into the GitHub run summary:
+The CI workflow writes the totals into the GitHub run summary, as here from while the suite was ahead of the
+implementation:
 
 ```
 test cases: 106 |  70 passed | 36 failed as expected
@@ -80,21 +81,20 @@ failing assertion.
 
 Pure, no SYCL, and mostly `constexpr`. Built on the `int[12,16,20]` example from [design.md](design.md#data-layout),
 which is available as `copylib_testing::reference_box`. Covers the box constructors, the window defaulting to the whole
-box, the 1D constructor producing exactly the 1D normal form, `total_bytes`, `end_offset`, `offset_at`,
-`for_each_contiguous_run` and `for_each_copy_run` (each checked against the oracle for every byte), the contiguity
-predicates over the window, field-wise `operator==`, `base_ptr`, and `staging_id` round-tripping.
+box, the 1D constructor producing exactly the 1D normal form, `total_bytes`, `offset_at` and `for_each_copy_run` (each
+checked against the oracle for every byte), the contiguity predicates over the window, field-wise `operator==`,
+`base_ptr`, and `staging_id` round-tripping.
 
 ### 2. Validation
 
-One accept and one reject per rule in [design.md](design.md#data-layout): non-zero strides, the box fitting inside one
+One accept and one reject per rule in [design.md](design.md#data-layout): positive strides, the box fitting inside one
 row and one plane (which is also what makes the encoding canonical), non-empty dimensions, the unbounded plane count,
 window bounds, equal window lengths across a spec including boxes of different sizes as a staged
 chunk has, and the reshaping case. Counting rows and planes removed the three divisibility rules a byte-based encoding
-needed. Empty plans and sets are valid. The 2-byte base alignment is assumed rather than checked. Plus: `is_valid`
-must be total, i.e. never crash on arbitrary field values — worth adding as a randomized case.
+needed. Empty plans and sets are valid. The 2-byte base alignment is assumed rather than checked.
 
 `is_valid` itself never throws. The functions that take a spec, plan or set throw on invalid input instead, and each
-layer gets one such case once they do.
+layer has one such case.
 
 ### 3. Normalization
 
@@ -151,7 +151,7 @@ implementation and six chunk sizes over ten named specs (host ends, same device,
 shifted windows), and 400 random specs and strategies, each checked against the oracle and the pipeline's invariants:
 valid and non-empty, the strategy's properties on every step, steps connect, staging used consistently, staged copies
 cross devices only in contiguous runs, no direct device-to-device step under host staging, no chunk over the size
-limit. Failures are counted and only the first per invariant is reported, so an unimplemented pipeline cannot flood
+limit. Failures are counted and only the first per invariant is reported, so a broken pipeline cannot flood
 the log. The random cases use a fixed seed; `COPYLIB_TEST_SEED` reproduces a different one.
 
 ### 8. Support: hashing and formatting
@@ -180,9 +180,10 @@ three to its caller.
 Fill the target with a sentinel, copy, compare the whole buffer against the reference — that checks the copied bytes and
 that untouched bytes stayed untouched, which is the likely failure mode of chunk alignment rounding. Assert the source
 is unchanged. Forced cases: whole allocation, single row, window inside one row, windows crossing row and plane
-boundaries, reshaping, one byte, odd row extents (alignment 1) and extents with alignment 64. The same spec with and
-without `use_kernel` must produce identical bytes. Host ends are tested with both pinned (`sycl::malloc_host`) and pageable
-memory. Then the randomized version of all of it, with a fixed seed and an override for reproduction.
+boundaries, reshaping, one byte, odd row extents (alignment 1), extents with alignment 64, and the same extents in
+memory starting 2 and 8 bytes past a 64-byte boundary, which the kernels have to narrow their element to. The same spec
+with and without `use_kernel` must produce identical bytes. Host ends are tested with both pinned (`sycl::malloc_host`)
+and pageable memory. Then the randomized version of all of it, with a fixed seed and an override for reproduction.
 
 ### 10. Ordering and concurrency
 
@@ -201,9 +202,10 @@ Tested with real copies, without a hook into the workers. `wait()` returns, afte
 immediately while a large copy is still running. Several calls can be in flight, and dropping a handle and then
 destroying the executor still completes the copy.
 
-Failures are tested with natural ones, such as a set whose staging does not fit the executor's buffers: a failure on
-the caller's thread throws from `execute_copy`, one inside a worker is reported through `error()` while the other plans
-still complete. What cannot be asserted is that a copy is *not yet* complete, since SimSYCL may already have finished it.
+Failures are tested with natural ones. A plan whose staging does not fit a worker's slice throws from `execute_copy` on
+the caller's thread. A plan naming a device the executor does not have fails inside its worker and is reported through
+`error()`, while the other plans still complete. What cannot be asserted is that a copy is *not yet* complete, since
+SimSYCL may already have finished it.
 
 ## What CI can and cannot prove
 
@@ -211,7 +213,7 @@ still complete. What cannot be asserted is that a copy is *not yet* complete, si
 | --- | --- |
 | Layers 1-8 in full | Ordering, through layer 9 on an asynchronous implementation |
 | Layer 9 data correctness | Peer access and true multi-device |
-| Layer 10 correct bytes with calls in flight | The kernel's int32 index path (needs > 2 GiB, untested for now) |
+| Layer 10 correct bytes with calls in flight | The kernel's int64 index path (needs offsets past 2^31 elements, untested for now) |
 | Layer 11 handle semantics | Any performance claim |
 
 SimSYCL is only the SYCL implementation used by the dev container and CI. It is not a design target.
@@ -223,14 +225,10 @@ in the pipeline needed them — see step 2 of [design.md](design.md#upcoming-ste
 
 - `total_bytes()`: bytes covered by the box, gaps excluded.
 - `window_length()`: `end - start`, the number of bytes a copy actually transfers.
-- `end_offset()`: the first byte past the box, **relative to the allocation base**, so that it can be bounds-checked
-  against a buffer size. That is its only remaining caller, which settles the question by elimination.
 - `offset_at(packed_offset)`: the allocation offset of one byte of the box, gaps excluded. Byte *i* of a copy is at
   `offset_at(start + i)`.
 - `is_window_contiguous()`: defined over the window, not the box, so a window inside a single row is contiguous even when its
   box is not. `d1_contiguous()` and `d2_contiguous()` ask whether the box fills whole rows or whole planes.
-- `for_each_contiguous_run(layout, f)`: the runs are ordered, non-overlapping, and their lengths sum to
-  `window_length()`.
 - `for_each_copy_run(spec, f)`: pairs byte *i* of both windows, and splits a run only where one side stops being
   contiguous, so a copy has as many runs as its more fragmented side.
 

@@ -16,10 +16,10 @@ TEST_CASE("the reference interpreter agrees with the documented example", "[refe
 	const auto offsets = reference_offsets(ref::fields());
 
 	REQUIRE(offsets.size() == static_cast<size_t>(ref::total_bytes));
-	CHECK(offsets.front() == ref::first_byte);                  // 2816
-	CHECK(offsets[ref::row_extent] == 2896);                     // next row
-	CHECK(offsets[ref::row_extent * ref::rows] == 4096);         // next plane
-	CHECK(offsets.back() == 5639);                               // last byte of the box
+	CHECK(offsets.front() == ref::first_byte);           // 2816
+	CHECK(offsets[ref::row_extent] == 2896);             // next row
+	CHECK(offsets[ref::row_extent * ref::rows] == 4096); // next plane
+	CHECK(offsets.back() == 5639);                       // last byte of the box
 }
 
 TEST_CASE("the reference interpreter respects the window", "[reference]") {
@@ -91,8 +91,8 @@ TEST_CASE("the simulation detects gaps, overlaps and stray writes", "[reference]
 	CHECK_FALSE(implements(parallel_copy_set{}, spec));
 
 	// right bytes, wrong place: target window shifted by one row
-	const auto shifted = copy_plan{spec_from_fields(
-	    device_id::d0, with_window_fields(spec.source_layout, 0, 264), device_id::d1, with_window_fields(spec.target_layout, 24, 288))};
+	const auto shifted = copy_plan{
+	    spec_from_fields(device_id::d0, with_window_fields(spec.source_layout, 0, 264), device_id::d1, with_window_fields(spec.target_layout, 24, 288))};
 	CHECK_FALSE(implements(shifted, spec));
 }
 

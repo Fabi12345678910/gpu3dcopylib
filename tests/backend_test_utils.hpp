@@ -74,6 +74,7 @@ enum class memory_kind { device, pinned_host, pageable_host };
 struct location {
 	copylib::device_id did;
 	memory_kind kind;
+	int64_t misalignment = 0; // bytes past a 64-byte boundary at which the memory starts
 };
 
 [[nodiscard]] inline constexpr location on_device(copylib::device_id did) { return {did, memory_kind::device}; }
@@ -89,25 +90,26 @@ inline constexpr location pageable_host{copylib::device_id::host, memory_kind::p
 	return {};
 }
 
-// One allocation, 64-byte aligned as the library assumes for every base. Pinned host memory is allocated through the
-// queue of `context_device`, the device at the other end of the copy, as the 2D executor kept a host buffer per device.
+// One allocation, starting `where.misalignment` bytes past a 64-byte boundary. Pinned host memory is allocated through
+// the queue of `context_device`, the device at the other end of the copy, as the 2D executor kept a host buffer per device.
 class test_allocation {
   public:
 	test_allocation(copylib::executor& exec, location where, int64_t size, copylib::device_id context_device) : where(where), bytes(size) {
 		// aligned allocations must be a whole number of alignments; SimSYCL aborts otherwise
-		const auto allocated = static_cast<size_t>((size + alignment - 1) / alignment * alignment);
+		const auto allocated = static_cast<size_t>((where.misalignment + size + alignment - 1) / alignment * alignment);
 		switch(where.kind) {
 		case memory_kind::device:
 			queue = &exec.get_queue(where.did);
-			ptr = sycl::aligned_alloc_device<std::byte>(alignment, allocated, *queue);
+			raw = sycl::aligned_alloc_device<std::byte>(alignment, allocated, *queue);
 			break;
 		case memory_kind::pinned_host:
 			queue = &exec.get_queue(context_device);
-			ptr = sycl::aligned_alloc_host<std::byte>(alignment, allocated, *queue);
+			raw = sycl::aligned_alloc_host<std::byte>(alignment, allocated, *queue);
 			break;
-		case memory_kind::pageable_host: ptr = static_cast<std::byte*>(std::aligned_alloc(alignment, allocated)); break;
+		case memory_kind::pageable_host: raw = static_cast<std::byte*>(std::aligned_alloc(alignment, allocated)); break;
 		}
-		if(ptr == nullptr) { throw std::bad_alloc(); }
+		if(raw == nullptr) { throw std::bad_alloc(); }
+		ptr = raw + where.misalignment;
 	}
 
 	test_allocation(const test_allocation&) = delete;
@@ -115,9 +117,9 @@ class test_allocation {
 
 	~test_allocation() {
 		if(where.kind == memory_kind::pageable_host) {
-			std::free(ptr);
+			std::free(raw);
 		} else {
-			sycl::free(ptr, *queue);
+			sycl::free(raw, *queue);
 		}
 	}
 
@@ -148,6 +150,7 @@ class test_allocation {
 	location where;
 	int64_t bytes;
 	sycl::queue* queue = nullptr;
+	std::byte* raw = nullptr; // as allocated, `where.misalignment` bytes before ptr
 	std::byte* ptr = nullptr;
 };
 
@@ -169,8 +172,8 @@ inline constexpr std::byte sentinel{0xcd};
 // the allocation a layout needs: up to the end of its box, plus slack behind it to catch writes past the box
 [[nodiscard]] inline int64_t allocation_size(const copylib::data_layout& layout) {
 	constexpr int64_t slack = 64;
-	const int64_t box_bytes = (layout.d0_end_offset - layout.d0_start_offset) * (layout.d1_end_offset - layout.d1_start_offset)
-	                          * (layout.d2_end_offset - layout.d2_start_offset);
+	const int64_t box_bytes =
+	    (layout.d0_end_offset - layout.d0_start_offset) * (layout.d1_end_offset - layout.d1_start_offset) * (layout.d2_end_offset - layout.d2_start_offset);
 	const auto offsets = reference_offsets(with_window_fields(layout, 0, box_bytes));
 	return (offsets.empty() ? 0 : offsets.back() + 1) + slack;
 }

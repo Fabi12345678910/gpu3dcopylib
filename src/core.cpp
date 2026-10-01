@@ -6,165 +6,154 @@
 namespace copylib {
 
 bool is_valid(const data_layout& layout) {
-    return layout.d0_start_offset >= 0 &&
-        layout.d1_start_offset >= 0 &&
-        layout.d2_start_offset >= 0 &&
-        layout.start >= 0 &&
-        layout.d0_stride > 0 && layout.d1_stride > 0
-        && layout.d0_end_offset > layout.d0_start_offset
-        && layout.d1_end_offset > layout.d1_start_offset
-        && layout.d2_end_offset > layout.d2_start_offset
-        && layout.end > layout.start
-        && layout.d0_end_offset <= layout.d0_stride
-        && layout.d1_end_offset <= layout.d1_stride
-        //confirm end actually is inside the copy box
-        && (layout.d2_end_offset - layout.d2_start_offset) * 
-           (layout.d1_end_offset - layout.d1_start_offset) *
-           (layout.d0_end_offset - layout.d0_start_offset) >= layout.end;
+	return layout.d0_start_offset >= 0 && layout.d1_start_offset >= 0 && layout.d2_start_offset >= 0 && layout.start >= 0 && layout.d0_stride > 0
+	       && layout.d1_stride > 0 && layout.d0_end_offset > layout.d0_start_offset && layout.d1_end_offset > layout.d1_start_offset
+	       && layout.d2_end_offset > layout.d2_start_offset && layout.end > layout.start && layout.d0_end_offset <= layout.d0_stride
+	       && layout.d1_end_offset <= layout.d1_stride && layout.end <= layout.total_bytes(); // the window lies inside the box
 }
 
 bool is_valid(const copy_spec& spec) {
-    return is_valid(spec.source_layout) && is_valid(spec.target_layout)
-        && spec.source_layout.window_length() == spec.target_layout.window_length();
+	return is_valid(spec.source_layout) && is_valid(spec.target_layout) && spec.source_layout.window_length() == spec.target_layout.window_length();
 }
 
 bool is_valid(const copy_plan& plan) {
-    for (const copy_spec& spec : plan) {
-        if(!is_valid(spec)){return false;};
-    }
-    return true;
+	for(const copy_spec& spec : plan) {
+		if(!is_valid(spec)) { return false; }
+	}
+	return true;
 }
 
-bool is_valid(const parallel_copy_set& set) { 
-    for (const copy_plan& spec : set) {
-        if(!is_valid(spec)){return false;};
-    }
-    return true;}
-
-//  A dimension of extent 1 is not merged by either collapse, there is nothing to merge. But its start offset and its
-//  stride stop showing up in any byte offset, so they have to be pinned or the same bytes keep several encodings.
-void canonicalize(data_layout& layout){
-    if(layout.d2_end_offset - layout.d2_start_offset != 1) return;
-
-//  one plane: fold its offset into d1, d1_stride is then free to be the smallest legal value
-    const int64_t rows = layout.d2_start_offset * layout.d1_stride;
-    layout.d1_start_offset += rows;
-    layout.d1_end_offset += rows;
-    layout.d2_start_offset = 0;
-    layout.d2_end_offset = 1;
-    layout.d1_stride = layout.d1_end_offset;
-
-    if(layout.d1_end_offset - layout.d1_start_offset != 1) return;
-
-//  one row as well: the box is a single run, so fold once more and d0_stride is free too
-    const int64_t bytes = layout.d1_start_offset * layout.d0_stride;
-    layout.d0_start_offset += bytes;
-    layout.d0_end_offset += bytes;
-    layout.d1_start_offset = 0;
-    layout.d1_end_offset = 1;
-    layout.d1_stride = 1;
-    layout.d0_stride = layout.d0_end_offset;
+bool is_valid(const parallel_copy_set& set) {
+	for(const copy_plan& spec : set) {
+		if(!is_valid(spec)) { return false; }
+	}
+	return true;
 }
 
-bool collapse_d1_onto_d0(data_layout& layout){
-    if(!layout.d1_contiguous()) return false;
+namespace {
 
-    data_layout old_layout(layout);
-    //collapse d1 onto d0
-    layout.d0_stride = old_layout.d0_stride * old_layout.d1_stride;
-    layout.d0_start_offset = old_layout.d1_start_offset * old_layout.d0_stride;
-    layout.d0_end_offset = old_layout.d1_end_offset * old_layout.d0_stride;
+	// A dimension of extent 1 is not merged by either collapse, there is nothing to merge. But its start offset and its
+	// stride stop showing up in any byte offset, so they have to be pinned or the same bytes keep several encodings.
+	void canonicalize(data_layout& layout) {
+		if(layout.d2_end_offset - layout.d2_start_offset != 1) return;
 
-    layout.d1_start_offset = old_layout.d2_start_offset;
-    layout.d1_end_offset = old_layout.d2_end_offset;
+		// one plane: fold its offset into d1, d1_stride is then free to be the smallest legal value
+		const int64_t rows = layout.d2_start_offset * layout.d1_stride;
+		layout.d1_start_offset += rows;
+		layout.d1_end_offset += rows;
+		layout.d2_start_offset = 0;
+		layout.d2_end_offset = 1;
+		layout.d1_stride = layout.d1_end_offset;
 
-//  see collapse_d2_onto_d1 for explanation
-    layout.d1_stride = layout.d1_end_offset;
-    layout.d2_start_offset = 0;
-    layout.d2_end_offset = 1;
-    return true;
-}
+		if(layout.d1_end_offset - layout.d1_start_offset != 1) return;
 
-bool collapse_d2_onto_d1(data_layout& layout){
-    if(!((layout.d1_start_offset == 0 && layout.d1_end_offset == layout.d1_stride))) return false;
+		// one row as well: the box is a single run, so fold once more and d0_stride is free too
+		const int64_t bytes = layout.d1_start_offset * layout.d0_stride;
+		layout.d0_start_offset += bytes;
+		layout.d0_end_offset += bytes;
+		layout.d1_start_offset = 0;
+		layout.d1_end_offset = 1;
+		layout.d1_stride = 1;
+		layout.d0_stride = layout.d0_end_offset;
+	}
 
-    data_layout old_layout(layout);
+	bool collapse_d1_onto_d0(data_layout& layout) {
+		if(!layout.d1_contiguous()) return false;
 
-    layout.d1_start_offset = old_layout.d2_start_offset * old_layout.d1_stride;
-    layout.d1_end_offset = old_layout.d2_end_offset * old_layout.d1_stride;
+		data_layout old_layout(layout);
+		// collapse d1 onto d0
+		layout.d0_stride = old_layout.d0_stride * old_layout.d1_stride;
+		layout.d0_start_offset = old_layout.d1_start_offset * old_layout.d0_stride;
+		layout.d0_end_offset = old_layout.d1_end_offset * old_layout.d0_stride;
 
-//  after collapse, d1_stride is not used at retrieving any offsets anymore
-//  but the is_valid check will test wether d1 extends d1_stride, so we have to adjust d1_stride to contain d1
-    layout.d1_stride = layout.d1_end_offset;
-    layout.d2_start_offset = 0;
-    layout.d2_end_offset = 1;
-    return true;
-}
+		layout.d1_start_offset = old_layout.d2_start_offset;
+		layout.d1_end_offset = old_layout.d2_end_offset;
+
+		// see collapse_d2_onto_d1 for explanation
+		layout.d1_stride = layout.d1_end_offset;
+		layout.d2_start_offset = 0;
+		layout.d2_end_offset = 1;
+		return true;
+	}
+
+	bool collapse_d2_onto_d1(data_layout& layout) {
+		if(!((layout.d1_start_offset == 0 && layout.d1_end_offset == layout.d1_stride))) return false;
+
+		data_layout old_layout(layout);
+
+		layout.d1_start_offset = old_layout.d2_start_offset * old_layout.d1_stride;
+		layout.d1_end_offset = old_layout.d2_end_offset * old_layout.d1_stride;
+
+		// after collapse, d1_stride is not used at retrieving any offsets anymore
+		// but the is_valid check will test whether d1 extends d1_stride, so we have to adjust d1_stride to contain d1
+		layout.d1_stride = layout.d1_end_offset;
+		layout.d2_start_offset = 0;
+		layout.d2_end_offset = 1;
+		return true;
+	}
+
+} // namespace
 
 data_layout normalize(const data_layout& layout) {
-    data_layout new_layout(layout);
-    collapse_d2_onto_d1(new_layout);
-    collapse_d1_onto_d0(new_layout);
-    canonicalize(new_layout);
-    return new_layout;
+	data_layout new_layout(layout);
+	collapse_d2_onto_d1(new_layout);
+	collapse_d1_onto_d0(new_layout);
+	canonicalize(new_layout);
+	return new_layout;
 }
 
 copy_spec normalize(const copy_spec& spec) {
-    return {spec.source_device, normalize(spec.source_layout), spec.target_device, normalize(spec.target_layout), spec.properties};
+	return {spec.source_device, normalize(spec.source_layout), spec.target_device, normalize(spec.target_layout), spec.properties};
 }
 
 parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& strategy) {
 	COPYLIB_ENSURE(is_valid(spec), "Invalid copy specification, cannot chunk: {}", spec);
-    if (strategy.chunk_size == 0) {return {{spec}};};
-    parallel_copy_set copy_set;
+	if(strategy.chunk_size == 0) { return {{spec}}; }
+	parallel_copy_set copy_set;
 
-    int64_t alignment = copy_alignment(spec);
+	int64_t alignment = copy_alignment(spec);
 
-    int64_t used_chunk_size = std::max(alignment, (strategy.chunk_size / alignment) * alignment);
-    
-    int64_t source_start = spec.source_layout.start;
-    int64_t target_start = spec.target_layout.start;
+	int64_t used_chunk_size = std::max(alignment, (strategy.chunk_size / alignment) * alignment);
 
-    while (source_start < spec.source_layout.end){
-        int64_t source_end = std::min((source_start / used_chunk_size + 1) * used_chunk_size, spec.source_layout.end);
-        int64_t target_end = target_start + (source_end - source_start);
+	int64_t source_start = spec.source_layout.start;
+	int64_t target_start = spec.target_layout.start;
+
+	while(source_start < spec.source_layout.end) {
+		int64_t source_end = std::min((source_start / used_chunk_size + 1) * used_chunk_size, spec.source_layout.end);
+		int64_t target_end = target_start + (source_end - source_start);
 
 
-        copy_set.push_back({{
-            spec.source_device, spec.source_layout.with_window(source_start, source_end),
-            spec.target_device, spec.target_layout.with_window(target_start, target_end),
-        spec.properties}});
+		copy_set.push_back({{spec.source_device, spec.source_layout.with_window(source_start, source_end), spec.target_device,
+		    spec.target_layout.with_window(target_start, target_end), spec.properties}});
 
-        source_start = source_end;
-        target_start = target_end;
-    }
+		source_start = source_end;
+		target_start = target_end;
+	}
 
-    return copy_set;
+	return copy_set;
 }
 
 copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) {
 	COPYLIB_ENSURE(is_valid(spec), "Invalid copy specification, cannot stage: {}", spec);
-    const auto proper_spec = spec.with_properties(strategy.properties);
-	
-    if(spec.source_device == device_id::host && spec.target_device == device_id::host) { return {proper_spec}; }
-    
-    if(strategy.type == copy_type::direct) { return {proper_spec}; }
+	const auto proper_spec = spec.with_properties(strategy.properties);
+
+	if(spec.source_device == device_id::host && spec.target_device == device_id::host) { return {proper_spec}; }
+
+	if(strategy.type == copy_type::direct) { return {proper_spec}; }
 	if(strategy.type != copy_type::staged) {
 		COPYLIB_ERROR("Unknown copy strategy type: {}", strategy.type);
 		return {proper_spec};
 	}
 
 	// if we are looking at a contiguous copy, we don't need to stage, but we need to normalize the layouts
-    if(spec.source_layout.is_window_contiguous() && spec.target_layout.is_window_contiguous()){
-        return {normalize(proper_spec)};
-    }
+	if(spec.source_layout.is_window_contiguous() && spec.target_layout.is_window_contiguous()) { return {normalize(proper_spec)}; }
 	// if the source is not unit stride, we need to stage the source
 	std::optional<copy_spec> source_staging_copy;
 	if(!spec.source_layout.is_window_contiguous()) {
 		const auto device_id_for_staging =
 		    spec.source_device != device_id::host ? spec.source_device : (spec.target_device != device_id::host ? spec.target_device : device_id::d0);
 		const auto source_staging_buffer = staging_provider(device_id_for_staging, spec.source_device == device_id::host, spec.source_layout.window_length());
-        const data_layout staged_source_layout = data_layout(source_staging_buffer, 0, spec.source_layout.window_length());
+		const data_layout staged_source_layout = data_layout(source_staging_buffer, 0, spec.source_layout.window_length());
 		source_staging_copy.emplace(spec.source_device, spec.source_layout, spec.source_device, staged_source_layout, strategy.properties);
 	}
 
@@ -200,7 +189,7 @@ copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, co
 	return plan;
 }
 parallel_copy_set apply_staging(const parallel_copy_set& set, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) {
-    parallel_copy_set copies;
+	parallel_copy_set copies;
 	for(const auto& copy : set) {
 		COPYLIB_ENSURE(copy.size() == 1, "Cannot stage a copy set with plans consisting of more than one copy (plan: {})", copy);
 		copies.push_back(apply_staging(copy.front(), strategy, staging_provider));

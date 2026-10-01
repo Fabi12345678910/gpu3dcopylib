@@ -42,7 +42,7 @@ Counting rows and planes rather than bytes keeps the three divisibility rules a 
 
 A layout is valid if:
 
-- `d0_stride` and `d1_stride` are non-zero.
+- `d0_stride` and `d1_stride` are positive.
 - The box fits, which also makes the encoding canonical: `0 <= d0_start < d0_end <= d0_stride` and `0 <= d1_start < d1_end <= d1_stride`. Otherwise one box has several encodings, which breaks `operator==`, hashing and plan chaining.
 - `0 <= d2_start < d2_end`. The allocation's plane count is unknown, so there is no upper bound.
 - `base` is assumed to be at least 2-byte aligned, since staging placeholders are detected by their lowest byte. `is_valid` does not check it.
@@ -109,29 +109,29 @@ Why stage at all: the gather/scatter kernels are cheap because they run in paral
 
 ## Remaining restrictions and implementation notes
 
-- Chunk boundaries have to be rounded to a local alignment: `copy_alignment()`, the largest power of two up to 64 that divides the row extents, `d0_stride` and `d0_start_offset` of both sides and the shift between the two windows (the plane size is a multiple of `d0_stride`, so it adds nothing; the base is assumed 64-byte aligned). It keeps kernels on wide element types and is computed per copy, not stored. `chunk_size` must be at least this alignment.
+- Chunk boundaries have to be rounded to a local alignment: `copy_alignment()`, the largest power of two up to 64 that divides the row extents, `d0_stride` and `d0_start_offset` of both sides and the shift between the two windows (the plane size is a multiple of `d0_stride`, so it adds nothing; the bases are unknown while planning, so the kernel narrows its element further for a base aligned to less). It keeps kernels on wide element types and is computed per copy, not stored. A smaller `chunk_size` is raised to it.
 - The kernel's `int32` index path has to check the full index span of the window on both sides, not individual fields.
 - Contiguity (`is_window_contiguous` on `data_layout`) is defined over the window. A window inside one row is a single `queue.copy`. There is no spec-level predicate; the backend asks both layouts.
 - The general 3D kernel needs two divmods per side per element, which is what `data_layout::offset_at()` computes. Mitigations: special-case 1D/2D boxes, or split same-extent copies into box-shaped pieces run as `nd_range<2>`/`<3>` kernels without division. Which of those applies is a property of the copy, not of one layout, so it is reduced from both sides at once (as Celerity does in `layout_nd_copy`) rather than reported per layout.
 - Overlap checks for copies within one allocation can only be conservative.
 - Direct d2d copies with host staging pack the staging layout. Staging buffers are always 1D, so their size is the window length.
-- Strided copies involving the host become `memcpy` loops without native 2D copies. Benchmark against the 2D library before accepting this.
+- Unstaged strided copies involving the host become one copy per run without native 2D copies: `queue.copy`, or `memcpy` between two host ends. Benchmark against the 2D library before accepting this.
 - Host memory given by the caller may be pinned (`sycl::malloc_host`) or pageable. Kernels cannot read pageable memory, so a copy involving pageable host memory must not take the kernel path.
 
 ## Open decisions
 
-These decide the public API and should be settled before implementing the backend:
+These decide the public API and were settled before implementing the backend:
 
 1. **Ownership.** Decided for now: the executor creates and owns its queues, see [async-execution.md](async-execution.md#decisions). The caller chooses the devices: the executor takes (device, context) pairs, so that `d_i` is the caller's device and its queues and staging memory live in the context the caller's memory belongs to, e.g. one context per device as Celerity creates them. Shortcuts take devices in their default contexts, or the first N GPUs. Taking the caller's queues as lanes is left to the Celerity integration, where copies are expected to run as `immediate` instructions that Celerity tracks through `copy_handle`. The SimSYCL system configuration and the data buffers (`dev_buffer`, `host_buffer` and their getters) move into the tests; the executor keeps only its staging buffers. Host staging is pinned only on request: with `COPYLIB_ALLOC_CPU_IDS` set, the executor allocates each device's host staging buffer while running on the CPU given for that device; without it, nothing is pinned. The 2D library's guess (half the hardware threads, split evenly by device index) is gone, since it was often wrong and could make construction fail in a restricted CPU set. A constructor parameter for the CPUs is left to the Celerity integration.
 2. **Blocking vs. async execution.** Decided: `execute_copy` hands the plans to worker threads on an executor-owned `BS::thread_pool` and returns a handle with `is_complete()` and `wait()`, see [async-execution.md](async-execution.md#decisions).
 3. **Error handling.** Decided: every failure throws `copylib::error`, including broken internal invariants, so `COPYLIB_ENSURE` throws instead of calling `std::exit(1)`. Failures inside a worker are reported as a message through `copy_handle::error()`, see [async-execution.md](async-execution.md#decisions).
 
-These can be settled during implementation:
+These were left to the implementation:
 
-4. **Staging alignment bug** in the 2D fulfiller (`size + alignment % size` does not round up). Fix it with proper round-up alignment.
+4. **Staging alignment bug** in the 2D fulfiller (`size + alignment % size` does not round up). Fixed: the fulfiller rounds every staging size up to the 128-byte staging alignment.
 5. **Staging memory reuse.** Decided: one slice of the staging buffers per pool worker, reused for every plan that worker runs, see [async-execution.md](async-execution.md#decisions). Only a single plan has to fit into a slice, not the whole set.
 6. **Strategy selection.** Should the library offer `select_strategy(spec, exec)` with benchmark-based thresholds?
-7. **Testing approach.** Property tests on SimSYCL comparing against a byte-by-byte reference copy.
+7. **Testing approach.** Decided: property tests on SimSYCL against an independent reference model and a byte-by-byte reference copy, see [testing.md](testing.md).
 
 ## Upcoming steps
 
@@ -141,11 +141,12 @@ These can be settled during implementation:
    table and example are updated. The accessors were reworked by dropping rather than defining them:
    - `dimensions()` is gone. How many strides a copy needs is a property of the pair of layouts, not of one of them,
      so it is reduced from both sides at once when the copy is executed.
-   - `total_extent()` is gone, subsumed by `end_offset()`. Its only use was sizing staging buffers, which are now
+   - `total_extent()` is gone. Its only use was sizing staging buffers, which are now
      always 1D and packed, so their size is the window length.
    - `layer_count()`, `layer_offset()` and `fragment_offset()` are gone. A window may start or end mid-row, so
      per-fragment indexing cannot describe what a copy transfers. They are replaced by `offset_at()`, the closed form
-     for a single byte, and by `for_each_contiguous_run()`, the iteration primitive over a window.
+     for a single byte, and by a run iterator over the window, since replaced by `for_each_copy_run()`, which pairs the
+     runs of both sides of a copy.
    - `unit_stride()` is renamed to `is_window_contiguous()`, which is what it means once it is defined over the window.
 3. ~~Write tests first, ahead of the implementation.~~ Done, every layer passes, see [testing.md](testing.md).
 4. ~~Implement the core.~~ Done, all planning layers pass: the layout accessors, `is_valid`, `normalize`, `apply_chunking`, `apply_staging`, `apply_d2d_implementation` and `manifest_strategy`. `is_equivalent` was dropped: the 2D implementation was of little use, and the tests check plans against their own reference model instead.

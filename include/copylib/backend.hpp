@@ -60,7 +60,7 @@ class executor {
 	// the first devices_needed GPUs, in their default contexts
 	executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_per_device = 1);
 	// every GPU, with one queue each
-	executor(int64_t buffer_size);
+	explicit executor(int64_t buffer_size);
 
 	sycl::queue& get_queue(device_id id, int64_t queue_idx = 0);
 	sycl::queue& get_queue(const target& tgt);
@@ -97,6 +97,7 @@ class executor {
 	int64_t buffer_size;
 	bool peer_access_available = false; // enabled and checked once by the constructor
 	int64_t staging_slice_size = 0;
+	int32_t preferred_wg_size = 0;
 
 	// declared last, so it is destroyed first: waits for the copies in flight while queues and staging memory still exist
 	BS::light_thread_pool pool;
@@ -154,11 +155,14 @@ namespace detail {
 // Completion state of one execute_copy call. Copies of a handle share the same state.
 class copy_handle {
   public:
+	// true once every plan has finished, successfully or not; monotonic, never blocks, never throws
 	[[nodiscard]] bool is_complete() const;
+	// blocks until is_complete() is true; never throws
 	void wait() const;
 
 	// the first failure of any plan once complete, empty on success
 	[[nodiscard]] std::optional<std::string> error() const;
+	// time from the call until the last plan finished, once complete
 	[[nodiscard]] std::optional<std::chrono::nanoseconds> execution_time() const;
 
   private:

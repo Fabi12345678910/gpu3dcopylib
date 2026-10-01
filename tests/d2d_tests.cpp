@@ -34,8 +34,8 @@ copy_plan staged_plan(const copy_spec& spec) {
 }
 
 copy_plan chunk(const copy_spec& spec, int64_t start, int64_t end) {
-	return {spec_from_fields(spec.source_device, with_window_fields(spec.source_layout, start, end), spec.target_device,
-	    with_window_fields(spec.target_layout, start, end))};
+	return {spec_from_fields(
+	    spec.source_device, with_window_fields(spec.source_layout, start, end), spec.target_device, with_window_fields(spec.target_layout, start, end))};
 }
 
 } // namespace
@@ -51,11 +51,12 @@ TEST_CASE("direct leaves every plan unchanged", "[d2d]") {
 }
 
 TEST_CASE("steps that are not between two devices are left alone", "[d2d]") {
-	const auto d2d = GENERATE(d2d_implementation::direct, d2d_implementation::host_staging_at_source, d2d_implementation::host_staging_at_target, d2d_implementation::host_staging_at_both);
+	const auto d2d = GENERATE(d2d_implementation::direct, d2d_implementation::host_staging_at_source, d2d_implementation::host_staging_at_target,
+	    d2d_implementation::host_staging_at_both);
 	CAPTURE(d2d);
 
-	for(const auto& [src, tgt] : {std::pair{device_id::d0, device_id::d0}, std::pair{device_id::host, device_id::d1},
-	        std::pair{device_id::d0, device_id::host}, std::pair{device_id::host, device_id::host}}) {
+	for(const auto& [src, tgt] : {std::pair{device_id::d0, device_id::d0}, std::pair{device_id::host, device_id::d1}, std::pair{device_id::d0, device_id::host},
+	        std::pair{device_id::host, device_id::host}}) {
 		CAPTURE(src, tgt);
 		std::vector<staging_request> log;
 		const copy_plan plan{spec_from_fields(src, ref::fields(), tgt, ref::fields(0x80000))};
@@ -151,7 +152,8 @@ TEST_CASE("after host staging no step goes directly between two devices", "[d2d]
 }
 
 TEST_CASE("rerouted steps keep their properties", "[d2d]") {
-	const auto d2d = GENERATE(d2d_implementation::direct, d2d_implementation::host_staging_at_source, d2d_implementation::host_staging_at_target, d2d_implementation::host_staging_at_both);
+	const auto d2d = GENERATE(d2d_implementation::direct, d2d_implementation::host_staging_at_source, d2d_implementation::host_staging_at_target,
+	    d2d_implementation::host_staging_at_both);
 	const auto properties = GENERATE(copy_properties::none, copy_properties::use_kernel);
 	CAPTURE(d2d, properties);
 	std::vector<staging_request> log;

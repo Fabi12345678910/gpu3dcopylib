@@ -57,7 +57,7 @@ The CMake script will report which SYCL implementation it has found and is using
 ### Environment Variables
 
 - `COPYLIB_ALLOC_CPU_IDS`: one CPU ID per device, comma-separated (e.g. `0,16,32,48`). While allocating the host staging buffer of device *i*, the executor runs on CPU *i*, so that the buffer lands on that CPU's NUMA node. Unset by default, in which case host staging is not pinned.
-- `COPYLIB_WG_SIZE`: the work-group size of the copy kernels. Default: 128 on Intel GPUs, 32 otherwise.
+- `COPYLIB_WG_SIZE`: the work-group size of the copy kernels, a positive integer. Default: 128 on Intel GPUs, 32 otherwise.
 
 ## Data Layout
 
@@ -97,7 +97,7 @@ using namespace copylib;
 const int64_t buffer_size = 128 * 1024 * 1024; // 128 MiB for staging buffers
 const int64_t queues_per_device = 2; // number of in-order queues per device for asynchronicity
 executor exec(buffer_size, 2, queues_per_device); // create an executor
-utils::print(exec.get_info()); // [optional] print information about the executution environment
+utils::print(exec.get_info()); // [optional] print information about the execution environment
 
 // === 2. Specifying a copy operation
 
@@ -141,6 +141,6 @@ Not yet ported from the 2D library:
 
 - `utils/info`: Print information about the execution environment and its features
 - `benchmarks/manifest`: Micro-benchmark measuring strategy manifesting performance
-- `benchmarks/intra_device`: Benchmark for intra-device linearization performnce
+- `benchmarks/intra_device`: Benchmark for intra-device linearization performance
 - `benchmarks/chunk_parallel`: Benchmark for optimized device-to-device copy performance
 - `benchmarks/full_set`: Perform a very large run of various benchmarks to characterize platform performance

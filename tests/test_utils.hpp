@@ -14,7 +14,7 @@
 #include <vector>
 
 // Catch2 prints the operands of a failed comparison through these, so failures show layouts and specs through the
-// library's formatters. They print empty strings until src/support.cpp is implemented.
+// library's formatters.
 namespace Catch {
 template <>
 struct StringMaker<copylib::data_layout> {
@@ -41,8 +41,8 @@ struct StringMaker<copylib::copy_strategy> {
 namespace copylib_testing {
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Construction helpers that bypass the (unimplemented) constructors, so that tests above the constructor layer depend
-// on as little unimplemented code as possible.
+// Construction helpers that bypass the constructors, so that a failure in the layers above them points at one layer
+// instead of cascading from the constructors.
 
 [[nodiscard]] inline copylib::data_layout layout_from_fields(intptr_t base, int64_t d0_stride, int64_t d1_stride, int64_t d0_start_offset,
     int64_t d1_start_offset, int64_t d2_start_offset, int64_t d0_end_offset, int64_t d1_end_offset, int64_t d2_end_offset, int64_t start, int64_t end) {
@@ -61,7 +61,7 @@ namespace copylib_testing {
 	return layout;
 }
 
-// staging_id's constructor does not store its arguments yet, so distinct ids are built field by field
+// the same for staging ids
 [[nodiscard]] inline copylib::staging_id staging_id_from_fields(bool on_host, copylib::device_id did, uint32_t index) {
 	copylib::staging_id id;
 	id.on_host = on_host;
@@ -84,7 +84,7 @@ namespace copylib_testing {
 	return layout;
 }
 
-// Likewise for copy specs: the constructor does not store the layouts yet, so they are assigned afterwards.
+// Likewise for copy specs. copy_spec has no default constructor, so the fields are assigned again after constructing.
 [[nodiscard]] inline copylib::copy_spec spec_from_fields(
     copylib::device_id source_device, const copylib::data_layout& source, copylib::device_id target_device, const copylib::data_layout& target) {
 	copylib::copy_spec spec{source_device, source, target_device, target};
@@ -95,9 +95,9 @@ namespace copylib_testing {
 	return spec;
 }
 
-// and for strategies, whose constructors do not store their arguments yet either
-[[nodiscard]] inline copylib::copy_strategy strategy_from_fields(copylib::copy_type type, copylib::copy_properties properties,
-    copylib::d2d_implementation d2d, int64_t chunk_size) {
+// and for strategies
+[[nodiscard]] inline copylib::copy_strategy strategy_from_fields(
+    copylib::copy_type type, copylib::copy_properties properties, copylib::d2d_implementation d2d, int64_t chunk_size) {
 	copylib::copy_strategy strategy;
 	strategy.type = type;
 	strategy.properties = properties;
@@ -215,10 +215,10 @@ struct address {
 using byte_mapping = std::map<address, address>; // written address -> address its value originates from
 
 struct simulation {
-	byte_mapping final_state;  // every non-staging address that was written, and where its value came from
-	bool consistent = true;    // false if a step had malformed layouts or windows of different lengths
-	bool conflicting = false;  // true if two plans of a set wrote the same address, staging buffers included
-	int64_t max_writes = 0;    // the most writes any single non-staging address received
+	byte_mapping final_state; // every non-staging address that was written, and where its value came from
+	bool consistent = true;   // false if a step had malformed layouts or windows of different lengths
+	bool conflicting = false; // true if two plans of a set wrote the same address, staging buffers included
+	int64_t max_writes = 0;   // the most writes any single non-staging address received
 };
 
 [[nodiscard]] inline simulation simulate(const copylib::parallel_copy_set& set) {
@@ -398,15 +398,15 @@ namespace reference_box {
 	constexpr int64_t d0_extent = 20; // elements per row
 	constexpr int64_t d1_extent = 16; // rows per plane
 
-	constexpr int64_t d0_stride = d0_extent * elem_size; // 80 bytes, one full row
-	constexpr int64_t d1_stride = d1_extent;             // 16 rows, one full plane
+	constexpr int64_t d0_stride = d0_extent * elem_size;   // 80 bytes, one full row
+	constexpr int64_t d1_stride = d1_extent;               // 16 rows, one full plane
 	constexpr int64_t plane_bytes = d1_stride * d0_stride; // 1280
 
 	constexpr int64_t d0_start_offset = 4 * elem_size; // 16 bytes
 	constexpr int64_t d0_end_offset = 10 * elem_size;  // 40 bytes
 	constexpr int64_t d1_start_offset = 3;             // rows
 	constexpr int64_t d1_end_offset = 7;
-	constexpr int64_t d2_start_offset = 2;             // planes
+	constexpr int64_t d2_start_offset = 2; // planes
 	constexpr int64_t d2_end_offset = 5;
 
 	constexpr int64_t row_extent = d0_end_offset - d0_start_offset; // 24 bytes
@@ -425,8 +425,7 @@ namespace reference_box {
 
 	// built through the constructor, so that constructor tests exercise it
 	[[nodiscard]] inline copylib::data_layout make() {
-		return copylib::data_layout{
-		    base, d0_stride, d1_stride, d0_start_offset, d1_start_offset, d2_start_offset, d0_end_offset, d1_end_offset, d2_end_offset};
+		return copylib::data_layout{base, d0_stride, d1_stride, d0_start_offset, d1_start_offset, d2_start_offset, d0_end_offset, d1_end_offset, d2_end_offset};
 	}
 
 	// built by assigning fields, for tests that are not about the constructors
@@ -436,9 +435,7 @@ namespace reference_box {
 	}
 
 	// the reference box on d0 copied to the same box of another allocation on d1
-	[[nodiscard]] inline copylib::copy_spec spec() {
-		return spec_from_fields(copylib::device_id::d0, fields(base), copylib::device_id::d1, fields(0x80000));
-	}
+	[[nodiscard]] inline copylib::copy_spec spec() { return spec_from_fields(copylib::device_id::d0, fields(base), copylib::device_id::d1, fields(0x80000)); }
 
 } // namespace reference_box
 
@@ -473,8 +470,8 @@ namespace shapes {
 	// partial rows spanning all 16 rows of two consecutive planes: since a plane is exactly 16 rows, the rows continue
 	// across the plane boundary with the same spacing, even though no two of them are adjacent
 	[[nodiscard]] inline copylib::data_layout partial_rows_of_two_full_planes(intptr_t at = ref::base) {
-		return layout_from_fields(at, ref::d0_stride, ref::d1_stride, ref::d0_start_offset, 0, 0, ref::d0_end_offset, ref::d1_stride, 2, 0,
-		    ref::row_extent * ref::d1_extent * 2);
+		return layout_from_fields(
+		    at, ref::d0_stride, ref::d1_stride, ref::d0_start_offset, 0, 0, ref::d0_end_offset, ref::d1_stride, 2, 0, ref::row_extent * ref::d1_extent * 2);
 	}
 
 	// 288 bytes as six rows of 48 inside rows of 64: the length of the reference box in a different strided shape

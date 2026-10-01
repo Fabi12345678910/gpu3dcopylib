@@ -10,38 +10,23 @@
 
 // Layer 1: the pure layout math, no SYCL involved.
 //
-// Cases covering functions that are not implemented yet are tagged [!mayfail]: they run and report their failures
-// without failing the build, so the failure count shrinks as the implementation lands. Remove the tag from a case
-// once the functions it covers work.
-//
 // Only the constructor cases build layouts through a constructor; everything else assigns the fields directly via
 // layout_from_fields(), so that a failure points at one layer instead of cascading from the constructors.
 
 using namespace copylib;
+using copylib_testing::layout_from_fields;
+using copylib_testing::reference_offsets;
+using copylib_testing::spec_from_fields;
+using copylib_testing::with_window_fields;
 using copylib_testing::shapes::full_rows_of_one_plane;
 using copylib_testing::shapes::one_row_of_six;
 using copylib_testing::shapes::single_row;
 using copylib_testing::shapes::six_rows_of_48;
 using copylib_testing::shapes::two_rows_of_three;
 using copylib_testing::shapes::whole_allocation;
-using copylib_testing::layout_from_fields;
-using copylib_testing::reference_offsets;
-using copylib_testing::spec_from_fields;
-using copylib_testing::with_window_fields;
 namespace ref = copylib_testing::reference_box;
 
 namespace {
-
-struct run {
-	int64_t offset;
-	int64_t length;
-};
-
-std::vector<run> collect_runs(const data_layout& layout) {
-	std::vector<run> runs;
-	for_each_contiguous_run(layout, [&](int64_t offset, int64_t length) { runs.push_back({offset, length}); });
-	return runs;
-}
 
 struct copy_run {
 	int64_t source_offset;
@@ -115,9 +100,7 @@ TEST_CASE("layouts compare equal exactly when all their fields match", "[layout]
 		CHECK_FALSE(layout == other);
 	}
 
-	SECTION("a different allocation") {
-		CHECK(layout != ref::fields(ref::base + 0x10000));
-	}
+	SECTION("a different allocation") { CHECK(layout != ref::fields(ref::base + 0x10000)); }
 
 	SECTION("the same bytes with different strides") {
 		// equality compares encodings, not bytes
@@ -129,7 +112,6 @@ TEST_CASE("layouts compare equal exactly when all their fields match", "[layout]
 }
 
 TEST_CASE("the window length is the size of the copy", "[layout][window]") {
-	// window_length() is implemented, so this case guards it rather than tracking progress
 	auto layout = ref::fields();
 	CHECK(layout.window_length() == ref::total_bytes);
 
@@ -146,25 +128,14 @@ TEST_CASE("the reference box covers the documented number of bytes", "[layout]")
 	CHECK(ref::fields().total_bytes() == 288);
 }
 
-TEST_CASE("the end offset is the first byte past the box", "[layout]") {
-	// relative to the allocation base, so that it can be bounds-checked against a buffer size:
-	// the last plane is plane 4, its last row is row 6, and that row ends 40 bytes in.
-	constexpr int64_t expected = (ref::d2_end_offset - 1) * ref::plane_bytes + (ref::d1_end_offset - 1) * ref::d0_stride + ref::d0_end_offset;
-	CHECK(expected == 5640); // guards the test's own arithmetic
-
-	CHECK(ref::fields().end_offset() == 5640);
-	CHECK(whole_allocation().end_offset() == 12 * ref::plane_bytes);
-}
-
 TEST_CASE("offset_at maps packed offsets into the allocation", "[layout]") {
 	const auto layout = ref::fields();
 
-	CHECK(layout.offset_at(0) == ref::first_byte);                     // 2816, first byte of the box
-	CHECK(layout.offset_at(ref::row_extent - 1) == 2839);              // last byte of the first row
-	CHECK(layout.offset_at(ref::row_extent) == 2896);                  // first byte of the second row, one row stride on
-	CHECK(layout.offset_at(ref::row_extent * ref::rows) == 4096);      // first byte of the second plane
-	CHECK(layout.offset_at(ref::total_bytes - 1) == 5639);             // last byte of the box
-	CHECK(layout.offset_at(ref::total_bytes - 1) == layout.end_offset() - 1);
+	CHECK(layout.offset_at(0) == ref::first_byte);                // 2816, first byte of the box
+	CHECK(layout.offset_at(ref::row_extent - 1) == 2839);         // last byte of the first row
+	CHECK(layout.offset_at(ref::row_extent) == 2896);             // first byte of the second row, one row stride on
+	CHECK(layout.offset_at(ref::row_extent * ref::rows) == 4096); // first byte of the second plane
+	CHECK(layout.offset_at(ref::total_bytes - 1) == 5639);        // last byte of the box
 }
 
 TEST_CASE("a strided box is not contiguous", "[layout]") {
@@ -175,7 +146,7 @@ TEST_CASE("a strided box is not contiguous", "[layout]") {
 	CHECK_FALSE(layout.d1_contiguous());
 	CHECK_FALSE(layout.d2_contiguous());
 
-	// paired with a positive, so that the case cannot pass while the predicates are placeholders returning false
+	// paired with a positive, so that predicates always returning false cannot pass
 	CHECK(whole_allocation().is_window_contiguous());
 }
 
@@ -213,54 +184,6 @@ TEST_CASE("contiguity is a property of the window, not of the box", "[layout][wi
 	CHECK(layout.is_window_contiguous());
 }
 
-TEST_CASE("iterating a full window yields one run per row", "[layout][window]") {
-	const auto runs = collect_runs(ref::fields());
-
-	// .at() rather than [] or back(): with the placeholder, GCC inlines an empty run list and warns about the
-	// out-of-bounds access, not realising the failed REQUIRE above it throws
-	REQUIRE(runs.size() == static_cast<size_t>(ref::rows * ref::planes)); // 12
-	for(const auto& r : runs) {
-		CHECK(r.length == ref::row_extent);
-	}
-
-	CHECK(runs.at(0).offset == ref::first_byte);                   // 2816
-	CHECK(runs.at(1).offset == ref::first_byte + ref::d0_stride);  // 2896, next row
-	CHECK(runs.at(4).offset == ref::first_byte + ref::plane_bytes); // 4096, next plane
-	CHECK(runs.at(11).offset + runs.at(11).length == 5640);        // ends where the box ends
-}
-
-TEST_CASE("iterating a partial window yields partial runs", "[layout][window]") {
-	// a window starting in the middle of the first row and ending in the middle of the second
-	auto layout = ref::fields();
-	layout.start = 12;
-	layout.end = 40;
-
-	const auto runs = collect_runs(layout);
-
-	REQUIRE(runs.size() == 2);
-	CHECK(runs.at(0).offset == 2828); // 2816 + 12, twelve bytes short of the end of the row
-	CHECK(runs.at(0).length == 12);
-	CHECK(runs.at(1).offset == 2896); // start of the second row
-	CHECK(runs.at(1).length == 16);
-}
-
-TEST_CASE("the runs of a window cover exactly its length", "[layout][window]") {
-	auto layout = ref::fields();
-	layout.start = 7;
-	layout.end = ref::total_bytes - 5;
-
-	int64_t covered = 0;
-	int64_t previous_end = 0;
-	for_each_contiguous_run(layout, [&](int64_t offset, int64_t length) {
-		CHECK(length > 0);
-		CHECK(offset >= previous_end); // runs are ordered and do not overlap
-		previous_end = offset + length;
-		covered += length;
-	});
-
-	CHECK(covered == layout.window_length());
-}
-
 TEST_CASE("offset_at agrees with the reference interpreter for every byte", "[layout]") {
 	for(const auto& layout : {ref::fields(), whole_allocation(), single_row(), full_rows_of_one_plane(), with_window_fields(ref::fields(), 7, 283)}) {
 		const auto expected = reference_offsets(layout);
@@ -270,18 +193,6 @@ TEST_CASE("offset_at agrees with the reference interpreter for every byte", "[la
 			all_match = all_match && layout.offset_at(layout.start + i) == expected[static_cast<size_t>(i)];
 		}
 		CHECK(all_match);
-	}
-}
-
-TEST_CASE("the runs of a window cover exactly the reference offsets", "[layout][window]") {
-	for(const auto& layout : {ref::fields(), whole_allocation(), full_rows_of_one_plane(), with_window_fields(ref::fields(), 12, 40)}) {
-		std::vector<int64_t> covered;
-		for_each_contiguous_run(layout, [&](int64_t offset, int64_t length) {
-			for(int64_t i = 0; i < length; ++i) {
-				covered.push_back(offset + i);
-			}
-		});
-		CHECK(copylib_testing::first_difference(covered, reference_offsets(layout)) == -1);
 	}
 }
 

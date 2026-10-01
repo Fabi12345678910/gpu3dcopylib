@@ -60,11 +60,14 @@ std::string where(const location& from, const location& to, const copy_strategy&
 	return describe(from) + " -> " + describe(to) + " with " + utils::format("{}", strategy);
 }
 
-// copies source to target for every pair of ends and every strategy
-void check_all(const data_layout& source, const data_layout& target) {
+// copies source to target for every pair of ends and every strategy, in memory starting the given number of bytes past a
+// 64-byte boundary
+void check_all(const data_layout& source, const data_layout& target, int64_t source_misalignment = 0, int64_t target_misalignment = 0) {
 	auto exec = make_executor();
 	copy_report report;
-	for(const auto& [from, to] : endpoint_pairs()) {
+	for(auto [from, to] : endpoint_pairs()) {
+		from.misalignment = source_misalignment;
+		to.misalignment = target_misalignment;
 		for(const auto& strategy : strategies()) {
 			const prepared_copy copy(exec, from, source, to, target);
 			report.add(run_copy(exec, copy, strategy), where(from, to, strategy));
@@ -80,30 +83,20 @@ data_layout reference_window(int64_t start, int64_t end) { return with_window_fi
 // ---------------------------------------------------------------------------------------------------------------------
 // Forced cases
 
-TEST_CASE("the reference box is copied into the same box of another allocation", "[backend]") {
-	check_all(ref::fields(), ref::fields());
-}
+TEST_CASE("the reference box is copied into the same box of another allocation", "[backend]") { check_all(ref::fields(), ref::fields()); }
 
-TEST_CASE("a whole allocation is copied as one run", "[backend]") {
-	check_all(shapes::whole_allocation(), shapes::whole_allocation());
-}
+TEST_CASE("a whole allocation is copied as one run", "[backend]") { check_all(shapes::whole_allocation(), shapes::whole_allocation()); }
 
-TEST_CASE("a single partial row is copied", "[backend]") {
-	check_all(shapes::single_row(), shapes::single_row());
-}
+TEST_CASE("a single partial row is copied", "[backend]") { check_all(shapes::single_row(), shapes::single_row()); }
 
-TEST_CASE("a window inside one row is copied", "[backend][window]") {
-	check_all(reference_window(2, 10), reference_window(2, 10));
-}
+TEST_CASE("a window inside one row is copied", "[backend][window]") { check_all(reference_window(2, 10), reference_window(2, 10)); }
 
 TEST_CASE("a window crossing row and plane boundaries is copied", "[backend][window]") {
 	// a plane of the box holds 96 bytes, so [12, 200) starts mid-row and ends in the third plane
 	check_all(reference_window(12, 200), reference_window(12, 200));
 }
 
-TEST_CASE("a single byte is copied", "[backend][window]") {
-	check_all(reference_window(5, 6), reference_window(5, 6));
-}
+TEST_CASE("a single byte is copied", "[backend][window]") { check_all(reference_window(5, 6), reference_window(5, 6)); }
 
 TEST_CASE("windows at different offsets of either side are copied", "[backend][window]") {
 	// shifted by 8 bytes, which limits the alignment to 8
@@ -132,6 +125,13 @@ TEST_CASE("rows aligned to 64 bytes are copied", "[backend][alignment]") {
 	const auto wide = layout_from_fields(0, 256, 4, 64, 0, 0, 192, 4, 2, 0, 128 * 4 * 2);
 	REQUIRE(copy_alignment(spec_from_fields(device_id::d0, wide, device_id::d1, wide)) == 64);
 	check_all(wide, wide);
+}
+
+TEST_CASE("rows aligned to more than their memory are copied", "[backend][alignment]") {
+	// the rows above, but the source starts 2 bytes past a 64-byte boundary, the least the library allows, and the target
+	// 8 bytes, so the kernels have to narrow their element to the bases
+	const auto wide = layout_from_fields(0, 256, 4, 64, 0, 0, 192, 4, 2, 0, 128 * 4 * 2);
+	check_all(wide, wide, 2, 8);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
