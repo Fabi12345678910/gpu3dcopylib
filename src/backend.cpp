@@ -142,7 +142,7 @@ namespace {
 	}
 
 	// enables peer access between every pair of devices, and reports whether every pair supports it
-	bool enable_peer_access([[maybe_unused]] device_list& devices) {
+	bool enable_peer_access([[maybe_unused]] detail::device_list& devices) {
 #if defined(SIMSYCL_VERSION)
 		return true;
 #elif defined(SYCL_LANGUAGE_VERSION) && defined(__INTEL_LLVM_COMPILER)
@@ -275,9 +275,9 @@ executor::executor(int64_t buffer_size, const std::vector<std::pair<sycl::device
 	peer_access_available = enable_peer_access(devices);
 }
 
-device::device(sycl::device dev, const std::vector<sycl::queue>& queues) : dev(dev), queues(queues) {}
+detail::device::device(sycl::device dev, const std::vector<sycl::queue>& queues) : dev(dev), queues(queues) {}
 
-device::~device() {
+detail::device::~device() {
 	for(auto& q : queues) {
 		q.wait(); // don't throw in the deconstructor
 	}

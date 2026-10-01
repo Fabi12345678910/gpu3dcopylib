@@ -4,9 +4,9 @@ Status of the design discussion for porting the 2D copy library (`old/gpu2dcopyl
 
 ## Current state
 
-- The API skeleton compiles: `include/copylib/*.hpp` holds the declarations, `src/*.cpp` the definitions with empty bodies. `src/utils.cpp` is ported as-is.
+- The library is implemented, and every test layer passes: on SimSYCL in CI, and on AdaptiveCpp's CPU backend, see [testing.md](testing.md).
 - `CMakeLists.txt` defines a single `copylib::copylib` target intended for `add_subdirectory` vendoring.
-- The skeleton does not reflect all decisions below yet (see [Upcoming steps](#upcoming-steps)).
+- Benchmarks, strategy selection and the Celerity integration come next, see [Upcoming steps](#upcoming-steps).
 
 ## Decisions
 
@@ -147,8 +147,8 @@ These can be settled during implementation:
      per-fragment indexing cannot describe what a copy transfers. They are replaced by `offset_at()`, the closed form
      for a single byte, and by `for_each_contiguous_run()`, the iteration primitive over a window.
    - `unit_stride()` is renamed to `is_window_contiguous()`, which is what it means once it is defined over the window.
-3. Write tests first, ahead of the implementation. In progress, see [testing.md](testing.md) for the layered plan and
-   for how progress is reported in CI.
+3. ~~Write tests first, ahead of the implementation.~~ Done, every layer passes, see [testing.md](testing.md).
 4. ~~Implement the core.~~ Done, all planning layers pass: the layout accessors, `is_valid`, `normalize`, `apply_chunking`, `apply_staging`, `apply_d2d_implementation` and `manifest_strategy`. `is_equivalent` was dropped: the 2D implementation was of little use, and the tests check plans against their own reference model instead.
-5. Implement the backend: staging fulfiller with correct alignment, the `execute_copy` paths (host `memcpy`, contiguous copy, merged 1D runs), the kernels (`int32` span check, special cases), and the worker threads with their handle.
-6. Add strategy selection and port the benchmarks. Compare against the 2D library, especially strided copies involving the host.
+5. ~~Implement the backend.~~ Done: the executor on the caller's (device, context) pairs; the staging fulfiller with correct alignment, placing each plan in its worker's slice; the `execute_copy` paths (host `memcpy`, contiguous copy, merged 1D runs via `for_each_copy_run`); a general 3D kernel with the `int32` span check; and the worker threads with their handle. The kernel's 1D/2D special cases wait for the benchmarks.
+6. Add strategy selection and port the benchmarks. Compare against the 2D library, especially strided copies involving the host, and against Celerity's backends. Also open to benchmarking: the number of workers, double buffering within a worker, and pinning the workers.
+7. Integrate into Celerity: an `async_event` adapter around `copy_handle`, copies as `immediate` instructions, and the executor built from Celerity's (device, context) pairs, see [async-execution.md](async-execution.md).

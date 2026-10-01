@@ -2,8 +2,8 @@
 
 #include <string>
 
-// Ported from the 2D library's copylib_support.hpp, whose bodies were inline in the header. Everything that does not
-// mention the layout fields is unchanged; what is left is marked TODO.
+// Ported from the 2D library's copylib_support.hpp, whose bodies were inline in the header.
+// Everything that does not mention the layout fields is unchanged.
 
 namespace std {
 

@@ -67,7 +67,7 @@ void canonicalize(data_layout& layout){
 }
 
 bool collapse_d1_onto_d0(data_layout& layout){
-    if(!layout.d1_contigious()) return false;
+    if(!layout.d1_contiguous()) return false;
 
     data_layout old_layout(layout);
     //collapse d1 onto d0

@@ -6,16 +6,18 @@ It is implemented in C++ and SYCL, and provides a C++ API.
 
 This library is based on `https://github.com/PeterTh/gpu2dcopylib`, with the main difference being the implementation of a 3rd copy dimension.
 
-This library was specifically designed for the use within celerity, and therefore may has interface features specific to the requirements presented by the celerity runtime
+This library was specifically designed for the use within celerity, and therefore may have interface features specific to the requirements presented by the celerity runtime.
 
 ## Status
 
-The API is complete, the implementation is not: every function is currently a skeleton returning a default-constructed
-value. `src/utils.cpp` is the only exception, it is carried over from the 2D library as-is.
+The library is implemented: planning (normalization, chunking, staging and the device-to-device routes) and execution
+(an executor with a staging slice per worker thread, copy kernels, and an asynchronous `copy_handle`). Every test
+passes on SimSYCL, which CI uses, and on AdaptiveCpp's CPU backend, the only asynchronous SYCL implementation it has
+run on so far.
 
-The test suite is being written ahead of the implementation. Test cases covering functions that are not implemented yet
-are tagged `[!mayfail]`, so they report their failures without failing the build, and the number of failures shrinks as
-the implementation lands. See [docs/testing.md](docs/testing.md) for the plan.
+Not done yet: benchmarks, a strategy selection based on them, and the integration into Celerity. See
+[docs/design.md](docs/design.md) for the design and its open decisions, and [docs/testing.md](docs/testing.md) for the
+test layers.
 
 ## Prerequisites
 

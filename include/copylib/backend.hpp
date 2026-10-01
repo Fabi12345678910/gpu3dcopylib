@@ -17,22 +17,27 @@
 
 namespace copylib {
 
-struct device {
-	sycl::device dev;
-	std::vector<sycl::queue> queues;
-	std::byte* staging_buffer = nullptr;
-	std::byte* host_staging_buffer = nullptr;
-	std::optional<int> host_staging_cpu; // the CPU the host staging was allocated from, if pinned
+namespace detail {
 
-	device(sycl::device dev, const std::vector<sycl::queue>& queues);
-	device(const device&) = delete;
-	device& operator=(const device&) = delete;
+	// what the executor keeps per device: its queues and its staging memory
+	struct device {
+		sycl::device dev;
+		std::vector<sycl::queue> queues;
+		std::byte* staging_buffer = nullptr;
+		std::byte* host_staging_buffer = nullptr;
+		std::optional<int> host_staging_cpu; // the CPU the host staging was allocated from, if pinned
 
-	~device();
-};
+		device(sycl::device dev, const std::vector<sycl::queue>& queues);
+		device(const device&) = delete;
+		device& operator=(const device&) = delete;
 
-// a deque never relocates its elements, so a device and the buffers it frees exist exactly once
-using device_list = std::deque<device>;
+		~device();
+	};
+
+	// a deque never relocates its elements, so a device and the buffers it frees exist exactly once
+	using device_list = std::deque<device>;
+
+} // namespace detail
 
 class copy_handle;
 
@@ -88,7 +93,7 @@ class executor {
   private:
 	friend copy_handle execute_copy(executor& exec, const parallel_copy_set& set);
 
-	device_list devices;
+	detail::device_list devices;
 	int64_t buffer_size;
 	bool peer_access_available = false; // enabled and checked once by the constructor
 	int64_t staging_slice_size = 0;

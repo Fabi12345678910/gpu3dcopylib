@@ -130,19 +130,19 @@ struct data_layout {
 		return (i_d2 + d2_start_offset) * d1_stride * d0_stride + (i_d1 + d1_start_offset) * d0_stride + (i_d0 + d0_start_offset);
 	}
 
-	[[nodiscard]] constexpr bool d1_contigious() const { 
+	[[nodiscard]] constexpr bool d1_contiguous() const { 
 		return d0_start_offset == 0 && d0_end_offset == d0_stride;
 	} // rows are adjacent, so they can be collapsed
-	[[nodiscard]] constexpr bool d2_contigious() const { 
-		return d1_contigious() && (d1_start_offset == 0 && d1_end_offset == d1_stride);
+	[[nodiscard]] constexpr bool d2_contiguous() const { 
+		return d1_contiguous() && (d1_start_offset == 0 && d1_end_offset == d1_stride);
 	}    // planes are adjacent, so they can be collapsed
 
 	// shape predicates, all defined over the window rather than over the whole box
 	[[nodiscard]] constexpr bool is_window_contiguous() const { 
-		if(d2_contigious()) return true; // the whole box is one run
+		if(d2_contiguous()) return true; // the whole box is one run
 		const int64_t d0_extent = d0_end_offset - d0_start_offset;
 		const int64_t last = end - 1;
-		if(d1_contigious()) { // each plane is one run
+		if(d1_contiguous()) { // each plane is one run
 			const int64_t d1_extent = d0_extent * (d1_end_offset - d1_start_offset);
 			return start / d1_extent == last / d1_extent;
 		}
@@ -289,8 +289,9 @@ data_layout normalize(const data_layout& layout);
 // exactly what the spec copies.
 copy_spec normalize(const copy_spec& spec);
 
-// The widest element the copy kernels can use, i.e. the largest power of two up to 64 dividing the row extents and
-// `d0_stride` of both sides. Chunk boundaries are multiples of it and `chunk_size` must be at least it.
+// The widest element the copy kernels can use, i.e. the largest power of two up to 64 dividing the row extents,
+// `d0_stride` and `d0_start_offset` of both sides and the shift between the two windows; the base is assumed to be
+// 64-byte aligned. Chunk boundaries are multiples of it, and a smaller `chunk_size` is raised to it.
 inline int64_t copy_alignment(const copy_spec& spec){
 	int64_t alignment = 64;
 	int64_t source_width = spec.source_layout.d0_end_offset - spec.source_layout.d0_start_offset;

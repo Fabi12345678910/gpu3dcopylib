@@ -1,6 +1,8 @@
 # Test Plan
 
-The test suite is written ahead of the implementation, so that the progress of the implementation is visible in CI.
+The test suite was written ahead of the implementation, so that the progress of the implementation was visible in CI.
+Every case passes now, and none is tagged `[!mayfail]`; the mechanism below stays for code written ahead of its
+implementation in the future.
 
 ## How progress is reported
 
@@ -19,10 +21,11 @@ the run summary. A case on it has either been implemented, and its tag should go
 
 Three rules keep this signal honest:
 
-- **Each test case pairs a positive check with its negative checks.** While `is_valid` is a placeholder returning
-  `false`, a lone `CHECK_FALSE(is_valid(malformed))` would pass for the wrong reason. The same goes for comparing two
-  results of one placeholder with each other: `normalize(a)` equals `normalize(b)` when both return `{}`. Three cases
-  broke this rule when they were first written, and `passing_mayfail.sh` caught all of them.
+- **Each test case pairs a positive check with its negative checks.** While a function is a placeholder, a lone
+  negative check passes for the wrong reason: with `is_valid` returning `false`, so did
+  `CHECK_FALSE(is_valid(malformed))`. The same goes for comparing two results of one placeholder with each other:
+  `normalize(a)` equals `normalize(b)` when both return `{}`. Three cases broke this rule when they were first written,
+  and `passing_mayfail.sh` caught all of them.
 - **Tests depend on as little unimplemented code as possible.** Layers above the constructors build layouts, specs,
   staging ids and strategies with the `*_from_fields()` helpers in `test_utils.hpp` rather than through constructors,
   so a failure points at one layer.
@@ -50,7 +53,7 @@ Comparisons of offset lists go through `first_difference()`, which reports the f
 vectors directly makes Catch2 print every element on failure, which for real layouts buries the CI log under thousands
 of numbers.
 
-Functions in `src/` that are not implemented yet return a default-constructed value rather than having an empty body: a
+A function written ahead of its implementation returns a default-constructed value rather than having an empty body: a
 non-void function falling off its end is undefined behaviour, which crashes the test binary instead of reporting a
 failing assertion.
 
@@ -64,14 +67,14 @@ failing assertion.
 | 2 | Validation | `tests/validation_tests.cpp` | passing |
 | 3 | Normalization | `tests/normalization_tests.cpp` | passing |
 | 4 | Chunking | `tests/chunking_tests.cpp` | passing |
-| 5 | Staging | `tests/staging_tests.cpp` | written |
-| 6 | d2d implementation | `tests/d2d_tests.cpp` | written |
-| 7 | `manifest_strategy` | `tests/manifest_tests.cpp` | written |
-| 8 | Support: hashing and formatting | `tests/support_tests.cpp` | written |
-| 9 | Backend data correctness | `tests/backend_tests.cpp` | written |
-| 10 | Ordering and concurrency | `tests/execution_tests.cpp` | written |
-| 11 | Async handle semantics | `tests/execution_tests.cpp` | written |
-| 12 | Executor and build | `tests/executor_tests.cpp` | written; the build itself is covered by CI |
+| 5 | Staging | `tests/staging_tests.cpp` | passing |
+| 6 | d2d implementation | `tests/d2d_tests.cpp` | passing |
+| 7 | `manifest_strategy` | `tests/manifest_tests.cpp` | passing |
+| 8 | Support: hashing and formatting | `tests/support_tests.cpp` | passing |
+| 9 | Backend data correctness | `tests/backend_tests.cpp` | passing |
+| 10 | Ordering and concurrency | `tests/execution_tests.cpp` | passing |
+| 11 | Async handle semantics | `tests/execution_tests.cpp` | passing |
+| 12 | Executor and build | `tests/executor_tests.cpp` | passing; the build itself is covered by CI |
 
 ### 1. Layout math
 
@@ -225,7 +228,7 @@ in the pipeline needed them — see step 2 of [design.md](design.md#upcoming-ste
 - `offset_at(packed_offset)`: the allocation offset of one byte of the box, gaps excluded. Byte *i* of a copy is at
   `offset_at(start + i)`.
 - `is_window_contiguous()`: defined over the window, not the box, so a window inside a single row is contiguous even when its
-  box is not. `d1_contigious()` and `d2_contigious()` ask whether the box fills whole rows or whole planes.
+  box is not. `d1_contiguous()` and `d2_contiguous()` ask whether the box fills whole rows or whole planes.
 - `for_each_contiguous_run(layout, f)`: the runs are ordered, non-overlapping, and their lengths sum to
   `window_length()`.
 - `for_each_copy_run(spec, f)`: pairs byte *i* of both windows, and splits a run only where one side stops being
