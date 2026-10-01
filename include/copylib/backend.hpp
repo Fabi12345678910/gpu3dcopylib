@@ -140,9 +140,6 @@ namespace detail {
 
 	step_result execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx = 0, bool alternate_device = false, step_result last = {});
 
-	// blocks until the plan is done; stages in the first worker's slice, so no execute_copy(set) may be in flight meanwhile
-	void execute_copy(executor& exec, const copy_plan& plan);
-
 } // namespace detail
 
 // Completion state of one execute_copy call. Copies of a handle share the same state.

@@ -301,7 +301,7 @@ handle.wait();
 if(const auto error = handle.error()) { copylib::utils::err_print("copy failed: {}\n", *error); }
 ```
 
-The per-spec and per-plan `execute_copy` overloads become synchronous building blocks in `detail`, run by the workers.
+The per-spec `execute_copy` overload becomes a synchronous building block in `detail`, run by the workers; the per-plan one is gone.
 Only `execute_copy` creates handles, so there is no public constructor and no empty handle.
 
 ### Handle details

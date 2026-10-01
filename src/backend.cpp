@@ -434,11 +434,6 @@ namespace {
 
 namespace detail {
 
-	void execute_copy(executor& exec, const copy_plan& plan) {
-		staging_fulfiller fulfiller(exec, 0);
-		execute_plan_impl(exec, plan, fulfiller, 0, false);
-	}
-
 	struct copy_state {
 		std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
 		std::chrono::steady_clock::time_point end;
