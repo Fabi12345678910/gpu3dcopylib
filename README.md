@@ -52,6 +52,11 @@ The CMake script will report which SYCL implementation it has found and is using
 
 `fmt` has to be findable by CMake if it is enabled; nothing is fetched automatically. Catch2 is fetched at configure time when the tests are built.
 
+### Environment Variables
+
+- `COPYLIB_ALLOC_CPU_IDS`: one CPU ID per device, comma-separated (e.g. `0,16,32,48`). While allocating the host staging buffer of device *i*, the executor runs on CPU *i*, so that the buffer lands on that CPU's NUMA node. Unset by default, in which case host staging is not pinned.
+- `COPYLIB_WG_SIZE`: the work-group size of the copy kernels. Default: 128 on Intel GPUs, 32 otherwise.
+
 ## Data Layout
 
 All copies are described by a `data_layout`, a box of data inside a larger 3D allocation. `d0` is the innermost dimension and always contiguous, `d2` the outermost; `d0` counts bytes, `d1` rows and `d2` planes:

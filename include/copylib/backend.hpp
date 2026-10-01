@@ -22,6 +22,7 @@ struct device {
 	std::vector<sycl::queue> queues;
 	std::byte* staging_buffer = nullptr;
 	std::byte* host_staging_buffer = nullptr;
+	std::optional<int> host_staging_cpu; // the CPU the host staging was allocated from, if pinned
 
 	device(sycl::device dev, const std::vector<sycl::queue>& queues);
 	device(const device&) = delete;
@@ -96,7 +97,10 @@ class executor {
 	BS::light_thread_pool pool;
 };
 
-int get_cpu_for_gpu_alloc(int gpu_idx, size_t total_gpu_count);
+// The CPU to allocate the host staging of device gpu_idx from, taken from COPYLIB_ALLOC_CPU_IDS (one CPU ID per device,
+// comma-separated). Empty when the variable is not set: the right CPUs depend on the machine and on the CPUs a job may
+// use, so host staging is pinned only on request.
+std::optional<int> get_cpu_for_gpu_alloc(int gpu_idx, size_t total_gpu_count);
 
 namespace detail {
 

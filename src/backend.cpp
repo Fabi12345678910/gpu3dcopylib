@@ -3,8 +3,8 @@
 #include <copylib/support.hpp> // IWYU pragma: keep - this is needed for formatting output, IWYU is dumb
 
 #include <algorithm>
-#include <array>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -14,7 +14,6 @@
 #include <mutex>
 #include <optional>
 #include <string>
-#include <thread>
 #include <utility>
 
 #include <pthread.h>
@@ -74,32 +73,21 @@ int32_t executor::get_preferred_wg_size() const {
 	return wg_size;
 }
 
-int get_cpu_for_gpu_alloc(int gpu_idx, size_t total_gpu_count) {
+std::optional<int> get_cpu_for_gpu_alloc(int gpu_idx, size_t total_gpu_count) {
 	constexpr int max_gpu_idx = static_cast<int>(device_id::count);
-	COPYLIB_ENSURE(gpu_idx < max_gpu_idx && gpu_idx >= 0, "Invalid gpu index: {} (needs to be >=0 and <{})", gpu_idx, max_gpu_idx);
-	COPYLIB_ENSURE(total_gpu_count <= max_gpu_idx, "Invalid total gpu count: {} (needs to be <{})", total_gpu_count, max_gpu_idx);
-	thread_local size_t initialized_for = 0; // the mapping depends on the total count, so it is cached per count
-	thread_local std::array<int, max_gpu_idx> cpu_for_gpu;
-	if(initialized_for != total_gpu_count) {
-		auto env_var = std::getenv("COPYLIB_ALLOC_CPU_IDS");
-		if(env_var) {
-			const auto cpu_ids = std::string(env_var);
-			const auto cpu_ids_split = utils::split(cpu_ids, ',');
-			COPYLIB_ENSURE(cpu_ids_split.size() >= total_gpu_count, "Insufficient number of CPU IDs provided in COPYLIB_ALLOC_CPU_IDS: {} (expected {})",
-			    cpu_ids_split.size(), total_gpu_count);
-			for(size_t i = 0; i < total_gpu_count; i++) {
-				cpu_for_gpu[i] = std::stoi(cpu_ids_split[i]);
-			}
-		} else { // guess
-			const auto hw_concurrency = std::thread::hardware_concurrency();
-			const auto cores = hw_concurrency / 2; // we just assume 2 threads per core
-			for(size_t i = 0; i < total_gpu_count; i++) {
-				cpu_for_gpu[i] = cores / total_gpu_count * i;
-			}
-		}
-		initialized_for = total_gpu_count;
-	}
-	return cpu_for_gpu[gpu_idx];
+	COPYLIB_ENSURE(gpu_idx >= 0 && static_cast<size_t>(gpu_idx) < total_gpu_count, "Invalid gpu index: {} (needs to be >=0 and <{})", gpu_idx, total_gpu_count);
+	COPYLIB_ENSURE(total_gpu_count <= max_gpu_idx, "Invalid total gpu count: {} (needs to be <={})", total_gpu_count, max_gpu_idx);
+	const auto env_var = std::getenv("COPYLIB_ALLOC_CPU_IDS");
+	if(env_var == nullptr) { return std::nullopt; }
+	const auto cpu_ids_split = utils::split(std::string(env_var), ',');
+	COPYLIB_ENSURE(cpu_ids_split.size() >= total_gpu_count, "Insufficient number of CPU IDs provided in COPYLIB_ALLOC_CPU_IDS: {} (expected {})",
+	    cpu_ids_split.size(), total_gpu_count);
+	const auto& cpu_id = cpu_ids_split[gpu_idx];
+	int cpu = -1;
+	const auto [end, error] = std::from_chars(cpu_id.data(), cpu_id.data() + cpu_id.size(), cpu);
+	COPYLIB_ENSURE(error == std::errc{} && end == cpu_id.data() + cpu_id.size() && cpu >= 0 && cpu < CPU_SETSIZE,
+	    "Invalid CPU ID in COPYLIB_ALLOC_CPU_IDS: '{}'", cpu_id);
+	return cpu;
 }
 
 std::string executor::get_info() const {
@@ -111,7 +99,8 @@ std::string executor::get_info() const {
 	for(size_t i = 0; i < devices.size(); i++) {
 		ret += utils::format("    Device {:2}: {} [{}]", i, //
 		    devices[i].dev.get_info<sycl::info::device::name>(), devices[i].dev.get_info<sycl::info::device::vendor>());
-		ret += utils::format(" (host alloc on core {})\n", get_cpu_for_gpu_alloc(i, devices.size()));
+		const auto& cpu = devices[i].host_staging_cpu;
+		ret += cpu ? utils::format(" (host alloc on core {})\n", *cpu) : std::string(" (host alloc not pinned)\n");
 	}
 	return ret;
 }
@@ -215,14 +204,16 @@ executor::executor(int64_t buffer_size, const std::vector<std::pair<sycl::device
 		    "Device {} is not part of the context given with it", device.get_info<sycl::info::device::name>());
 	}
 
-	cpu_set_t prior_mask;
-	CPU_ZERO(&prior_mask);
-	COPYLIB_ENSURE(pthread_getaffinity_np(pthread_self(), sizeof(prior_mask), &prior_mask) == 0, "Failed to get CPU affinity");
-	// restores the affinity however the constructor is left, so a failed check cannot leave the caller pinned to one core
+	// restores the calling thread's affinity however the constructor is left, so a failed check cannot leave it pinned
 	struct affinity_guard {
-		cpu_set_t mask;
-		~affinity_guard() { pthread_setaffinity_np(pthread_self(), sizeof(mask), &mask); }
-	} const restore_affinity{prior_mask};
+		cpu_set_t prior;
+		affinity_guard() {
+			CPU_ZERO(&prior);
+			COPYLIB_ENSURE(pthread_getaffinity_np(pthread_self(), sizeof(prior), &prior) == 0, "Failed to get CPU affinity");
+		}
+		~affinity_guard() { pthread_setaffinity_np(pthread_self(), sizeof(prior), &prior); }
+	};
+	std::optional<affinity_guard> restore_affinity; // only once something is pinned
 
 	// a whole number of alignments, which aligned allocations require on some implementations; reported as the buffer size
 	this->buffer_size = (buffer_size + detail::staging_alignment - 1) / detail::staging_alignment * detail::staging_alignment;
@@ -264,15 +255,20 @@ executor::executor(int64_t buffer_size, const std::vector<std::pair<sycl::device
 		dev.staging_buffer = sycl::aligned_alloc_device<std::byte>(detail::staging_alignment, staging_bytes, q);
 		COPYLIB_ENSURE(dev.staging_buffer != nullptr, "Failed to allocate device staging buffer");
 
-		cpu_set_t mask_for_device;
-		CPU_ZERO(&mask_for_device);
-		const auto cpu_id = get_cpu_for_gpu_alloc(dev_id, device_contexts.size());
-		CPU_SET(cpu_id, &mask_for_device);
-		COPYLIB_ENSURE(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &mask_for_device) == 0, "Failed to set CPU affinity");
+		// pinned only on request: the calling thread runs on the CPU given for this device while allocating its host staging
+		dev.host_staging_cpu = get_cpu_for_gpu_alloc(dev_id, device_contexts.size());
+		if(dev.host_staging_cpu) {
+			if(!restore_affinity) { restore_affinity.emplace(); }
+			cpu_set_t mask_for_device;
+			CPU_ZERO(&mask_for_device);
+			CPU_SET(*dev.host_staging_cpu, &mask_for_device);
+			COPYLIB_ENSURE(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &mask_for_device) == 0, "Failed to set CPU affinity to CPU {} for device {}",
+			    *dev.host_staging_cpu, dev_id);
+		}
 
 		dev.host_staging_buffer = sycl::aligned_alloc_host<std::byte>(detail::staging_alignment, staging_bytes, q);
 		COPYLIB_ENSURE(dev.host_staging_buffer != nullptr, "Failed to allocate host staging buffer");
-		std::memset(dev.host_staging_buffer, 0, staging_bytes); // first touch, placing the pages close to the CPU chosen above
+		std::memset(dev.host_staging_buffer, 0, staging_bytes); // first touch, placing the pages close to the CPU pinned above, if any
 
 		dev_id++;
 	}

@@ -6,8 +6,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <cstdlib>
+#include <string>
 #include <utility>
 #include <vector>
+
+#include <pthread.h>
 
 // Layer 12: constructing the executor and what it reports about itself.
 //
@@ -20,6 +24,33 @@ using namespace copylib_testing;
 namespace ref = copylib_testing::reference_box;
 
 using device_contexts = std::vector<std::pair<sycl::device, sycl::context>>;
+
+namespace {
+
+// sets COPYLIB_ALLOC_CPU_IDS for its lifetime
+struct alloc_cpu_ids {
+	explicit alloc_cpu_ids(const std::string& ids) { setenv("COPYLIB_ALLOC_CPU_IDS", ids.c_str(), 1); }
+	alloc_cpu_ids(const alloc_cpu_ids&) = delete;
+	alloc_cpu_ids& operator=(const alloc_cpu_ids&) = delete;
+	~alloc_cpu_ids() { unsetenv("COPYLIB_ALLOC_CPU_IDS"); }
+};
+
+cpu_set_t current_affinity() {
+	cpu_set_t mask;
+	CPU_ZERO(&mask);
+	REQUIRE(pthread_getaffinity_np(pthread_self(), sizeof(mask), &mask) == 0);
+	return mask;
+}
+
+int first_allowed_cpu() {
+	const auto mask = current_affinity();
+	for(int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+		if(CPU_ISSET(cpu, &mask)) { return cpu; }
+	}
+	return -1;
+}
+
+} // namespace
 
 TEST_CASE("an executor has in-order queues for every requested device and queue index", "[executor]") {
 	const auto devices = test_devices(2);
@@ -102,6 +133,36 @@ TEST_CASE("an executor describes itself", "[executor]") {
 	const auto exec = make_executor();
 	CHECK_FALSE(exec.get_sycl_impl_name().empty());
 	CHECK_FALSE(exec.get_info().empty());
+}
+
+TEST_CASE("host staging is pinned only when COPYLIB_ALLOC_CPU_IDS asks for it", "[executor][pinning]") {
+	unsetenv("COPYLIB_ALLOC_CPU_IDS");
+	CHECK_FALSE(get_cpu_for_gpu_alloc(0, 2).has_value());
+	CHECK(make_executor().get_info().find("host alloc not pinned") != std::string::npos);
+
+	// a CPU this thread may run on, for both devices; afterwards the thread runs where it ran before
+	const int cpu = first_allowed_cpu();
+	REQUIRE(cpu >= 0);
+	const auto before = current_affinity();
+	{
+		const alloc_cpu_ids ids(std::to_string(cpu) + "," + std::to_string(cpu));
+		CHECK(get_cpu_for_gpu_alloc(1, 2) == cpu);
+		CHECK(make_executor().get_info().find("host alloc on core " + std::to_string(cpu)) != std::string::npos);
+	}
+	const auto after = current_affinity();
+	CHECK(CPU_EQUAL(&before, &after));
+}
+
+TEST_CASE("an invalid COPYLIB_ALLOC_CPU_IDS is reported as copylib::error", "[executor][pinning][error]") {
+	// malformed, too few for two devices, negative, and a CPU this machine almost certainly lacks
+	const auto before = current_affinity();
+	for(const char* ids : {"0,x", "0, 1", "0", "-1,0", "1023,1023"}) {
+		CAPTURE(ids);
+		const alloc_cpu_ids set(ids);
+		CHECK_THROWS_AS(make_executor(2, 1), copylib::error);
+	}
+	const auto after = current_affinity();
+	CHECK(CPU_EQUAL(&before, &after));
 }
 
 TEST_CASE("failed checks throw copylib::error", "[executor][error]") {
