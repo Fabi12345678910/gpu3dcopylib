@@ -1,4 +1,4 @@
-# GPU 3D Copy Lib [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/celerity/celerity-runtime/blob/master/LICENSE)
+# GPU 3D Copy Lib [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 This library intends to provide a simple very high performance way to copy strided data with a 3D layout between GPU devices, and between CPU and GPU memory spaces.
 
@@ -11,13 +11,17 @@ This library was specifically designed for the use within celerity, and therefor
 ## Status
 
 The library is implemented: planning (normalization, chunking, staging and the device-to-device routes) and execution
-(an executor with a staging slice per worker thread, copy kernels, and an asynchronous `copy_handle`). Every test
-passes on SimSYCL, which CI uses, and on AdaptiveCpp's CPU backend, the only asynchronous SYCL implementation it has
-run on so far.
+(an executor with a staging slice per worker thread, copy kernels, and an asynchronous `copy_handle`). Its test suite
+runs on SimSYCL in CI and on AdaptiveCpp's CPU backend.
 
-Not done yet: benchmarks, a strategy selection based on them, and the integration into Celerity. See
-[docs/design.md](docs/design.md) for the design and its open decisions, and [docs/testing.md](docs/testing.md) for the
-test layers.
+It has been integrated into a fork of the [Celerity](https://github.com/celerity/celerity-runtime) runtime, where it performs strided
+copies involving device memory, and has run on AMD GPUs (RX 9060 XT, Radeon 8060S, MI250X)
+with AdaptiveCpp and DPC++, and on NVIDIA GPUs. Copies involving the host are staged by default: the host side is packed
+into a contiguous pinned buffer, which is transferred in one piece and unpacked on the device, and vice versa. The
+`use_host_kernel` copy property is the alternative: a kernel accesses pinned host memory directly. Which of the two is
+faster depends on the system, so the library leaves the choice to the caller through the `copy_strategy`.
+
+See [.docs/design.md](.docs/design.md) for the design and [.docs/testing.md](.docs/testing.md) for the test layers.
 
 ## Prerequisites
 
@@ -136,13 +140,3 @@ const auto handle = execute_copy(exec, copy_set); // returns immediately
 handle.wait(); // blocks until every plan has finished
 COPYLIB_ENSURE(!handle.error(), "Copy failed: {}", *handle.error());
 ```
-
-## Benchmarks and Utilities
-
-Not yet ported from the 2D library:
-
-- `utils/info`: Print information about the execution environment and its features
-- `benchmarks/manifest`: Micro-benchmark measuring strategy manifesting performance
-- `benchmarks/intra_device`: Benchmark for intra-device linearization performance
-- `benchmarks/chunk_parallel`: Benchmark for optimized device-to-device copy performance
-- `benchmarks/full_set`: Perform a very large run of various benchmarks to characterize platform performance

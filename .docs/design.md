@@ -1,12 +1,12 @@
 # 3D Copy Lib: Design Notes
 
-Status of the design discussion for porting the 2D copy library (`old/gpu2dcopylib`) to 3D, and the next steps.
+Design notes of the port of the [2D copy library](https://github.com/PeterTh/gpu2dcopylib) to 3D.
 
 ## Current state
 
-- The library is implemented, and every test layer passes: on SimSYCL in CI, and on AdaptiveCpp's CPU backend, see [testing.md](testing.md).
+- The library is implemented, and every test layer passes: on SimSYCL in CI, and on AdaptiveCpp's CPU backend, see [testing.md](testing.md). On GPUs it is exercised through the Celerity integration.
 - `CMakeLists.txt` defines a single `copylib::copylib` target intended for `add_subdirectory` vendoring.
-- Benchmarks, strategy selection and the Celerity integration come next, see [Upcoming steps](#upcoming-steps).
+- It is integrated into Celerity and was benchmarked there on AMD and NVIDIA GPUs, see [Upcoming steps](#upcoming-steps).
 
 ## Decisions
 
@@ -130,7 +130,7 @@ These were left to the implementation:
 
 4. **Staging alignment bug** in the 2D fulfiller (`size + alignment % size` does not round up). Fixed: the fulfiller rounds every staging size up to the 128-byte staging alignment.
 5. **Staging memory reuse.** Decided: one slice of the staging buffers per pool worker, reused for every plan that worker runs, see [async-execution.md](async-execution.md#decisions). Only a single plan has to fit into a slice, not the whole set.
-6. **Strategy selection.** Should the library offer `select_strategy(spec, exec)` with benchmark-based thresholds?
+6. **Strategy selection.** Decided: the library offers no selection, the caller chooses the `copy_strategy`. Celerity stages copies involving the host and uses one strided kernel for device-only copies. The `use_host_kernel` property lets the kernel access pinned host memory directly instead of staging, which was faster on some of the measured systems and much slower on others.
 7. **Testing approach.** Decided: property tests on SimSYCL against an independent reference model and a byte-by-byte reference copy, see [testing.md](testing.md).
 
 ## Upcoming steps
@@ -151,5 +151,5 @@ These were left to the implementation:
 3. ~~Write tests first, ahead of the implementation.~~ Done, every layer passes, see [testing.md](testing.md).
 4. ~~Implement the core.~~ Done, all planning layers pass: the layout accessors, `is_valid`, `normalize`, `apply_chunking`, `apply_staging`, `apply_d2d_implementation` and `manifest_strategy`. `is_equivalent` was dropped: the 2D implementation was of little use, and the tests check plans against their own reference model instead.
 5. ~~Implement the backend.~~ Done: the executor on the caller's (device, context) pairs; the staging fulfiller with correct alignment, placing each plan in its worker's slice; the `execute_copy` paths (host `memcpy`, contiguous copy, merged 1D runs via `for_each_copy_run`); a general 3D kernel with the `int32` span check; and the worker threads with their handle. The kernel's 1D/2D special cases wait for the benchmarks.
-6. Add strategy selection and port the benchmarks. Compare against the 2D library, especially strided copies involving the host, and against Celerity's backends. Also open to benchmarking: the number of workers, double buffering within a worker, and pinning the workers.
-7. Integrate into Celerity: an `async_event` adapter around `copy_handle`, copies as `immediate` instructions, and the executor built from Celerity's (device, context) pairs, see [async-execution.md](async-execution.md).
+6. ~~Add strategy selection and port the benchmarks.~~ Done differently: there is no selection in the library (open decision 6), and the benchmarks were run through Celerity's strided and block transfer programs instead of porting the 2D library's benchmark programs, which are not part of this repository. The library's environment variables are listed in the README.
+7. ~~Integrate into Celerity.~~ Done: an `async_event` adapter around `copy_handle`, copies as `immediate` instructions, and the executor built from Celerity's (device, context) pairs, see [async-execution.md](async-execution.md).
