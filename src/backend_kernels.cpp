@@ -43,7 +43,8 @@ sycl::event copy_with_kernel_impl(sycl::queue& q, const copy_spec& spec, IdxType
 	const size_t wg_size = preferred_wg_size;
 	const sycl::nd_range<1> ndr{(static_cast<size_t>(extent) + wg_size - 1) / wg_size * wg_size, wg_size};
 	return q.parallel_for(ndr, [=](sycl::nd_item<1> idx) {
-		const IdxType i = idx.get_global_id(0);
+		// measured 10-15% faster than get_global_id with DPC++ for strided stores (MI250X), not understood further
+		const IdxType i = idx.get_group(0) * wg_size + idx.get_local_id(0);
 		if(i >= extent) { return; }
 		tgt[tgt_layout.offset_at(tgt_start + i)] = src[src_layout.offset_at(src_start + i)];
 	});
