@@ -4,6 +4,7 @@ project(gpu3dcopylib CXX)
 
 option(COPYLIB_USE_FMT "Use the fmt library rather than std::format" OFF)
 # only built by default for top-level builds, so that vendoring this library does not pull in Catch2
+option(COPYLIB_TRACE "Print every copy and every step to stderr; waits after each step, for diagnosis only" OFF)
 option(COPYLIB_BUILD_TESTS "Build the test suite" ${PROJECT_IS_TOP_LEVEL})
 
 # when vendored, the enclosing project has usually already found a SYCL implementation
@@ -62,6 +63,10 @@ if(COPYLIB_USE_FMT)
   find_package(fmt REQUIRED)
   target_link_libraries(copylib PUBLIC fmt::fmt)
   target_compile_definitions(copylib PUBLIC COPYLIB_USE_FMT)
+endif()
+
+if(COPYLIB_TRACE)
+  target_compile_definitions(copylib PRIVATE COPYLIB_TRACE)
 endif()
 
 if(COPYLIB_BUILD_TESTS)

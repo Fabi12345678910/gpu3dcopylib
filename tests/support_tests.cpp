@@ -149,6 +149,7 @@ TEST_CASE("enum-like types keep their 2D format", "[support][format]") {
 	CHECK(utils::format("{}", d2d_implementation::host_staging_at_both) == "host_staging_at_both");
 
 	CHECK(utils::format("{}", copy_properties::use_kernel) == "use_kernel");
+	CHECK(utils::format("{}", copy_properties::use_kernel | copy_properties::use_host_kernel) == "use_kernel|use_host_kernel");
 
 	CHECK(utils::format("{}", staging_id_from_fields(true, device_id::d0, 42)) == "S(42, d0host)");
 	CHECK(utils::format("{}", staging_id_from_fields(false, device_id::d1, 0)) == "S(0, d1)");

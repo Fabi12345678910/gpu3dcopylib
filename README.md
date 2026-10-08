@@ -50,6 +50,7 @@ The CMake script will report which SYCL implementation it has found and is using
 ### Configuration Options
 
 - `COPYLIB_USE_FMT`: Use the fmt library instead of relying on the C++20 `std::format`. Default: `OFF`
+- `COPYLIB_TRACE`: Print every copy and every step to stderr. The executor waits after each step, so this is for diagnosis only. Default: `OFF`
 - `COPYLIB_BUILD_TESTS`: Build the test suite. Default: `ON` for top-level builds, `OFF` when vendored
 
 `fmt` has to be findable by CMake if it is enabled; nothing is fetched automatically. Catch2 is fetched at configure time when the tests are built.
@@ -57,6 +58,7 @@ The CMake script will report which SYCL implementation it has found and is using
 ### Environment Variables
 
 - `COPYLIB_ALLOC_CPU_IDS`: one CPU ID per device, comma-separated (e.g. `0,16,32,48`). While allocating the host staging buffer of device *i*, the executor runs on CPU *i*, so that the buffer lands on that CPU's NUMA node. Unset by default, in which case host staging is not pinned.
+- `COPYLIB_WORKER_CPUS`: where the worker threads may run: `all` (default), `inherit` (the affinity of the thread creating the executor) or a comma-separated CPU list, of which worker *i* takes entry *i* mod *n*.
 - `COPYLIB_WG_SIZE`: the work-group size of the copy kernels, a positive integer. Default: 128 on Intel GPUs, 32 otherwise.
 
 ## Data Layout

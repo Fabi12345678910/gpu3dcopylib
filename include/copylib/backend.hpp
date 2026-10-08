@@ -113,6 +113,9 @@ namespace detail {
 	// alignment of the staging buffers and of every offset handed out in them
 	inline constexpr int64_t staging_alignment = 128;
 
+	// widest element a copy kernel moves per work item, the cap the benchmarks on AMD GPUs settled on
+	inline constexpr int64_t max_kernel_element_bytes = 16;
+
 	sycl::event copy_with_kernel(sycl::queue& q, const copy_spec& spec, int32_t preferred_wg_size);
 
 	class staging_fulfiller {

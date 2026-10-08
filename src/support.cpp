@@ -66,6 +66,7 @@ format_context::iterator formatter<copylib::data_layout>::format(const copylib::
 format_context::iterator formatter<copylib::copy_properties>::format(const copylib::copy_properties& p, format_context& ctx) const {
 	std::string result;
 	if(p & copylib::copy_properties::use_kernel) { result += "use_kernel"; }
+	if(p & copylib::copy_properties::use_host_kernel) { result += result.empty() ? "use_host_kernel" : "|use_host_kernel"; }
 	return formatter<std::string>::format(result, ctx);
 }
 

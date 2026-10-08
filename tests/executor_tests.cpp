@@ -195,6 +195,24 @@ TEST_CASE("an invalid COPYLIB_WG_SIZE is reported as copylib::error", "[executor
 	}
 }
 
+TEST_CASE("COPYLIB_WORKER_CPUS accepts all, inherit and CPU lists", "[executor]") {
+	// the workers run copies either way; the affinity itself is not observable through the public API
+	for(const char* choice : {"all", "inherit", "0", "0,0"}) {
+		CAPTURE(choice);
+		const scoped_env set("COPYLIB_WORKER_CPUS", choice);
+		CHECK_NOTHROW(make_executor(2, 2));
+	}
+}
+
+TEST_CASE("an invalid COPYLIB_WORKER_CPUS is reported as copylib::error", "[executor][error]") {
+	// empty, malformed, with a space, negative, and a CPU this machine almost certainly lacks
+	for(const char* cpus : {"", "x", "0,x", "0, 1", "-1", "1023000"}) {
+		CAPTURE(cpus);
+		const scoped_env set("COPYLIB_WORKER_CPUS", cpus);
+		CHECK_THROWS_AS(make_executor(), copylib::error);
+	}
+}
+
 TEST_CASE("failed checks throw copylib::error", "[executor][error]") {
 	// COPYLIB_ENSURE is the library's single way of failing; it throws rather than ending the process
 	CHECK_THROWS_AS([] { COPYLIB_ENSURE(1 + 1 == 3, "arithmetic is broken: {}", 1 + 1); }(), copylib::error);

@@ -14,9 +14,14 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include <pthread.h>
+
+#if defined(__x86_64__) && !defined(__SYCL_DEVICE_ONLY__)
+#include <immintrin.h> // non-temporal stores for packing 4-byte rows into staging
+#endif
 
 namespace copylib {
 
@@ -167,6 +172,44 @@ namespace {
 		return with_default_contexts(gpu_devices);
 	}
 
+	// where the workers run: COPYLIB_WORKER_CPUS is `all` (the default), `inherit` or a comma-separated CPU list, of which worker i takes entry i mod n
+	struct worker_cpus {
+		bool inherit = false;
+		std::vector<int> cpus; // all CPUs if empty
+	};
+
+	worker_cpus read_worker_cpus() {
+		const auto env_var = std::getenv("COPYLIB_WORKER_CPUS");
+		if(env_var == nullptr || std::strcmp(env_var, "all") == 0) { return {}; }
+		if(std::strcmp(env_var, "inherit") == 0) { return {true, {}}; }
+		worker_cpus choice;
+		for(const auto& entry : utils::split(env_var, ',')) {
+			int cpu = 0;
+			const auto [end, error] = std::from_chars(entry.data(), entry.data() + entry.size(), cpu);
+			COPYLIB_ENSURE(
+			    error == std::errc{} && end == entry.data() + entry.size() && cpu >= 0 && cpu < CPU_SETSIZE, "Invalid CPU in COPYLIB_WORKER_CPUS: '{}'", entry);
+			choice.cpus.push_back(cpu);
+		}
+		COPYLIB_ENSURE(!choice.cpus.empty(), "Empty COPYLIB_WORKER_CPUS");
+		return choice;
+	}
+
+	// by default the workers may run anywhere: they would otherwise inherit the affinity of the thread constructing the executor, which
+	// can be pinned to a single core shared with a busy caller
+	void set_worker_affinity(const worker_cpus& choice, std::size_t worker) {
+		if(choice.inherit) { return; }
+		cpu_set_t mask;
+		CPU_ZERO(&mask);
+		if(choice.cpus.empty()) {
+			for(unsigned cpu = 0; cpu < std::thread::hardware_concurrency(); cpu++) {
+				CPU_SET(cpu, &mask);
+			}
+		} else {
+			CPU_SET(choice.cpus[worker % choice.cpus.size()], &mask);
+		}
+		pthread_setaffinity_np(pthread_self(), sizeof(mask), &mask);
+	}
+
 	// COPYLIB_WG_SIZE if set, otherwise a default for the vendor of the first device
 	int32_t read_preferred_wg_size(const sycl::device& first_device) {
 		const auto env_var = std::getenv("COPYLIB_WG_SIZE");
@@ -176,6 +219,77 @@ namespace {
 		const auto [end, error] = std::from_chars(env_var, env_end, wg_size);
 		COPYLIB_ENSURE(error == std::errc{} && end == env_end && wg_size > 0, "Invalid work-group size in COPYLIB_WG_SIZE: '{}'", env_var);
 		return wg_size;
+	}
+
+	// copies `rows` rows of `w` bytes between a strided side (pitch apart) and a packed side; W is the row width if known at compile time (else 0)
+	template <int64_t W, bool Pack>
+	void copy_rows_fixed(std::byte* s, int64_t pitch, int64_t w, std::byte* c, int64_t rows) {
+		const int64_t width = W ? W : w;
+#if defined(__x86_64__) && !defined(__SYCL_DEVICE_ONLY__)
+		if constexpr(Pack && W == 4) { // non-temporal stores: staging lines are written without being read first
+			for(int64_t r = 0; r < rows; ++r, s += pitch, c += 4) {
+				int v;
+				std::memcpy(&v, s, 4);
+				_mm_stream_si32(reinterpret_cast<int*>(c), v);
+			}
+			_mm_sfence(); // the stores are weakly ordered, make them visible before the staging buffer is handed on
+			return;
+		}
+#endif
+		for(int64_t r = 0; r < rows; ++r, s += pitch, c += width) {
+			Pack ? std::memcpy(c, s, width) : std::memcpy(s, c, width);
+		}
+	}
+
+	// fixed widths let the compiler inline the row copies, which makes narrow rows an order of magnitude faster than a memcpy per run
+	template <bool Pack>
+	void copy_rows(std::byte* s, int64_t pitch, int64_t w, std::byte* c, int64_t rows) {
+		switch(w) {
+		case 1: return copy_rows_fixed<1, Pack>(s, pitch, w, c, rows);
+		case 2: return copy_rows_fixed<2, Pack>(s, pitch, w, c, rows);
+		case 4: return copy_rows_fixed<4, Pack>(s, pitch, w, c, rows);
+		case 8: return copy_rows_fixed<8, Pack>(s, pitch, w, c, rows);
+		case 12: return copy_rows_fixed<12, Pack>(s, pitch, w, c, rows);
+		case 16: return copy_rows_fixed<16, Pack>(s, pitch, w, c, rows);
+		case 24: return copy_rows_fixed<24, Pack>(s, pitch, w, c, rows);
+		case 32: return copy_rows_fixed<32, Pack>(s, pitch, w, c, rows);
+		case 64: return copy_rows_fixed<64, Pack>(s, pitch, w, c, rows);
+		default: return copy_rows_fixed<0, Pack>(s, pitch, w, c, rows);
+		}
+	}
+
+	// host -> host; where exactly one side is strided and the window covers a row, the rows are packed or unpacked in a loop per plane,
+	// otherwise one memcpy per run that is contiguous on both sides
+	void copy_host_to_host(const copy_spec& spec) {
+		const auto& src = spec.source_layout;
+		const auto& dst = spec.target_layout;
+		const bool pack = dst.is_window_contiguous();
+		const auto& strided = pack ? src : dst;
+		const auto& contiguous = pack ? dst : src;
+		const int64_t w = strided.d0_end_offset - strided.d0_start_offset;
+		const int64_t h = strided.d1_end_offset - strided.d1_start_offset;
+		if(src.is_window_contiguous() == pack || strided.end - strided.start < w) {
+			for_each_copy_run(spec, [&](int64_t s, int64_t t, int64_t n) { std::memcpy(dst.base_ptr() + t, src.base_ptr() + s, n); });
+			return;
+		}
+		std::byte* c = contiguous.base_ptr() + contiguous.offset_at(contiguous.start);
+		// a window may cut its first and last row
+		const auto copy_part = [&](int64_t from, int64_t to) {
+			std::byte* s = strided.base_ptr() + strided.offset_at(from);
+			pack ? std::memcpy(c, s, to - from) : std::memcpy(s, c, to - from);
+			c += to - from;
+		};
+		const int64_t first_row = (strided.start + w - 1) / w;
+		const int64_t end_row = strided.end / w;
+		if(strided.start < first_row * w) { copy_part(strided.start, first_row * w); }
+		for(int64_t row = first_row; row < end_row;) {
+			const int64_t rows = std::min(end_row, (row / h + 1) * h) - row; // up to the end of the current plane
+			std::byte* s = strided.base_ptr() + strided.offset_at(row * w);
+			pack ? copy_rows<true>(s, strided.d0_stride, w, c, rows) : copy_rows<false>(s, strided.d0_stride, w, c, rows);
+			c += rows * w;
+			row += rows;
+		}
+		if(end_row * w < strided.end) { copy_part(end_row * w, strided.end); }
 	}
 
 } // namespace
@@ -189,7 +303,8 @@ executor::executor(int64_t buffer_size, const std::vector<sycl::device>& devices
     : executor(buffer_size, with_default_contexts(devices), queues_per_device) {}
 
 executor::executor(int64_t buffer_size, const std::vector<std::pair<sycl::device, sycl::context>>& device_contexts, int64_t queues_per_device)
-    : buffer_size(buffer_size), pool(checked_queues_per_device(queues_per_device)) {
+    : buffer_size(buffer_size),
+      pool(checked_queues_per_device(queues_per_device), [choice = read_worker_cpus()](const std::size_t worker) { set_worker_affinity(choice, worker); }) {
 	COPYLIB_ENSURE(!device_contexts.empty(), "Need at least one device");
 	COPYLIB_ENSURE(device_contexts.size() <= static_cast<size_t>(device_id::count), "Too many devices: {} (at most {})", device_contexts.size(),
 	    static_cast<int>(device_id::count));
@@ -272,6 +387,17 @@ executor::executor(int64_t buffer_size, const std::vector<std::pair<sycl::device
 		dev_id++;
 	}
 	peer_access_available = enable_peer_access(devices);
+
+	// the first use of a kernel width or of fresh staging memory is slow (JIT compilation, page mapping), which would show up in the first copy
+	for(auto& dev : devices) {
+		dev.queues[0].memset(dev.staging_buffer, 0, staging_bytes).wait();
+		const auto base = reinterpret_cast<intptr_t>(dev.staging_buffer);
+		for(int64_t size = 1; size <= detail::max_kernel_element_bytes; size *= 2) {
+			detail::copy_with_kernel(
+			    dev.queues[0], copy_spec(device_id::d0, data_layout(base, 0, size), device_id::d0, data_layout(base, 64, size)), preferred_wg_size)
+			    .wait();
+		}
+	}
 }
 
 detail::device::device(sycl::device dev, const std::vector<sycl::queue>& queues) : dev(dev), queues(queues) {}
@@ -323,9 +449,7 @@ namespace detail {
 		//  for host <-> host copies, use memcpy
 		if(spec.source_device == device_id::host && spec.target_device == device_id::host) {
 			if(last_device != device_id::host && last_device != device_id::count) { last.event.wait_and_throw(); }
-			for_each_copy_run(spec, [&](int64_t source_offset, int64_t target_offset, int64_t length) {
-				std::memcpy(target_layout.base_ptr() + target_offset, source.base_ptr() + source_offset, length);
-			});
+			copy_host_to_host(spec);
 			return {{device_id::host, 0}, {}};
 		}
 
@@ -344,8 +468,9 @@ namespace detail {
 			                    target_layout.base_ptr() + target_layout.offset_at(target_layout.start), source.window_length())};
 		}
 
-		// technically, one could use a kernel for copies involving the host on some hw/sw stacks, but we'll ignore that for now
-		if(spec.properties & copy_properties::use_kernel && spec.source_device != device_id::host && spec.target_device != device_id::host) {
+		// a kernel can only access host memory that is pinned, which the caller promises with use_host_kernel
+		const bool host_involved = spec.source_device == device_id::host || spec.target_device == device_id::host;
+		if(spec.properties & copy_properties::use_kernel && (!host_involved || spec.properties & copy_properties::use_host_kernel)) {
 			return {target, copy_with_kernel(queue, spec, exec.get_preferred_wg_size())};
 		}
 		// the queue is in order, so the last copy completes after all the others
@@ -410,7 +535,15 @@ namespace {
 		detail::step_result last;
 		for(auto spec : plan) {
 			fulfiller.fulfill(spec);
+#ifdef COPYLIB_TRACE
+			const auto start = std::chrono::steady_clock::now();
+#endif
 			last = detail::execute_copy(exec, spec, queue_idx, alternate_device, last);
+#ifdef COPYLIB_TRACE
+			last.event.wait_and_throw();
+			utils::err_print("copylib trace: {} -> {}, {} bytes in {} ms\n", spec.source_device, spec.target_device, spec.source_layout.window_length(),
+			    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+#endif
 		}
 		// the plan is done only once its last step is; earlier steps are covered by the waits between steps and queue order
 		last.event.wait_and_throw();
@@ -473,6 +606,9 @@ std::optional<std::chrono::nanoseconds> copy_handle::execution_time() const {
 
 copy_handle execute_copy(executor& exec, const parallel_copy_set& set) {
 	COPYLIB_ENSURE(is_valid(set), "Invalid copy set: {}", set);
+#ifdef COPYLIB_TRACE
+	utils::err_print("copylib trace: copy of {} plans\n", set.size());
+#endif
 	// every plan has to fit into one worker's slice of staging; checked here, so that a plan too large throws from this call
 	for(const auto& plan : set) {
 		detail::staging_fulfiller fits(exec, 0);
@@ -489,21 +625,24 @@ copy_handle execute_copy(executor& exec, const parallel_copy_set& set) {
 		return copy_handle(state);
 	}
 
-	// one contiguous part of the plans per queue index, each run by one worker; single-copy plans alternate devices
-	const int64_t parts_count = exec.get_queues_per_device();
-	int64_t first_plan = 0;
-	for(int64_t part = 0; part < parts_count; part++) {
-		const int64_t plans_in_part = total_plans / parts_count + (part < total_plans % parts_count ? 1 : 0);
-		if(plans_in_part == 0) { continue; }
-		// the worker owns its plans and shares the state, since the call returns before the plans have run
-		std::vector<copy_plan> plans(set.begin() + first_plan, set.begin() + first_plan + plans_in_part);
-		first_plan += plans_in_part;
-		exec.pool.detach_task([&exec, state, part, plans = std::move(plans)] {
+	// one task per queue index, each run by one worker; the workers take the next plan nobody has started, so that a slow plan does not
+	// hold back plans that would have been assigned to the same worker. single-copy plans alternate devices
+	struct shared_plans {
+		parallel_copy_set plans;
+		std::atomic<int64_t> next{0};
+	};
+	// the workers own the plans and share the state, since the call returns before the plans have run
+	const auto shared = std::make_shared<shared_plans>();
+	shared->plans = set;
+	const int64_t workers = std::min(exec.get_queues_per_device(), total_plans);
+	for(int64_t part = 0; part < workers; part++) {
+		exec.pool.detach_task([&exec, state, part, shared] {
 			// staging goes into this worker's own slice, from its start for every plan: the worker runs one plan at a time and
 			// waits for it to finish, and no other worker uses the slice, so calls in flight together never share staging
 			const auto slice = static_cast<int64_t>(BS::this_thread::get_index().value());
 			int64_t plan_idx = 0;
-			for(const auto& plan : plans) {
+			for(int64_t i = shared->next++; i < static_cast<int64_t>(shared->plans.size()); i = shared->next++) {
+				const auto& plan = shared->plans[i];
 				const bool use_alternate_device = plan.size() == 1 && plan_idx % 2 == 1;
 				try {
 					detail::staging_fulfiller fulfiller(exec, slice);

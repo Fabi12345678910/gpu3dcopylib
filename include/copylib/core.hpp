@@ -156,7 +156,8 @@ struct data_layout {
 
 enum class copy_properties {
 	none = 0x0000,
-	use_kernel = 0x0001, // whether to use a kernel to perform the copy
+	use_kernel = 0x0001,      // whether to use a kernel to perform the copy
+	use_host_kernel = 0x0002, // whether that kernel may also access host memory, which then has to be pinned (accessible from the device)
 };
 
 inline copy_properties operator|(copy_properties a, copy_properties b) { return static_cast<copy_properties>(static_cast<int>(a) | static_cast<int>(b)); }

@@ -64,10 +64,10 @@ sycl::event copy_with_kernel_impl(sycl::queue& q, const copy_spec& spec, int32_t
 }
 
 sycl::event copy_with_kernel(sycl::queue& q, const copy_spec& spec, int32_t preferred_wg_size) {
-	// the widest element that tiles both windows: copy_alignment covers the rows, strides and offsets of both sides and the
+	// the widest element (up to max_kernel_element_bytes) that tiles both windows: copy_alignment covers the rows, strides and offsets of both sides and the
 	// shift between the windows, which leaves the window's own start and length, as chunks may start and end unaligned, and
 	// both bases, which planning does not know
-	int64_t elem_size = copy_alignment(spec);
+	int64_t elem_size = std::min<int64_t>(copy_alignment(spec), max_kernel_element_bytes);
 	while(spec.source_layout.start % elem_size != 0 || spec.source_layout.window_length() % elem_size != 0 || spec.source_layout.base % elem_size != 0
 	      || spec.target_layout.base % elem_size != 0) {
 		elem_size /= 2;

@@ -103,6 +103,21 @@ TEST_CASE("windows at different offsets of either side are copied", "[backend][w
 	check_all(reference_window(0, 280), reference_window(8, 288));
 }
 
+TEST_CASE("a kernel accesses pinned host memory when the strategy allows it", "[backend]") {
+	const std::vector<std::pair<location, location>> pairs = {{pinned_host, on_device(device_id::d0)}, {on_device(device_id::d1), pinned_host}};
+	const auto kernel = copy_properties::use_kernel | copy_properties::use_host_kernel;
+	auto exec = make_executor();
+	copy_report report;
+	for(const auto& [from, to] : pairs) {
+		for(const auto chunk : {int64_t{0}, int64_t{64}}) {
+			const auto strategy = strategy_from_fields(copy_type::direct, kernel, d2d_implementation::direct, chunk);
+			const prepared_copy copy(exec, from, ref::fields(), to, ref::fields());
+			report.add(run_copy(exec, copy, strategy), where(from, to, strategy));
+		}
+	}
+	report.check();
+}
+
 TEST_CASE("a reshaping copy is copied", "[backend]") {
 	// rows of 24 bytes into rows of 48
 	check_all(ref::fields(), shapes::six_rows_of_48(0));
